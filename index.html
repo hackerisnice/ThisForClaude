@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>PUBG 端游还原版 - 真实AI跳伞/触须避障寻路/战术走位</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="portrait-warn">
+  <h2>📱 请将手机横屏游玩</h2>
+  <p style="margin-top:8px;color:#ccc;font-size:13px;">已实装：AI真实跳伞开伞、7向触须避障+房门寻路、交火左右走位、迈步动画</p>
+</div>
+
+<div id="canvas-container"></div>
+<div id="damage-flash"></div>
+<div id="bluezone-overlay"></div>
+<div id="toast-msg">提示消息</div>
+
+<div id="minimap-box" title="点击切换雷达缩放比例">
+  <canvas id="minimap-canvas" width="96" height="96"></canvas>
+  <div id="zone-timer">⏳ 阶段1等待: 01:15</div>
+</div>
+
+<div id="top-hud">
+  <div style="width:106px;"></div>
+  <div id="compass-bar">N 0° | 艾伦格·P城战区</div>
+  <div id="match-Counters">
+    <div class="counter-box">存活<span class="counter-num" id="alive-count">50</span></div>
+    <div class="counter-box">淘汰<span class="counter-num" id="kill-count">0</span></div>
+    <button id="btn-ui-cfg">⚙️键位</button>
+  </div>
+</div>
+
+<div id="ui-cfg-panel">
+  <div style="color:#ffa500;font-weight:bold;margin-bottom:4px;display:flex;justify-content:space-between;">
+    <span>按键大小与透明度</span>
+    <span id="btn-close-cfg" style="cursor:pointer;color:#ff4422;">✕</span>
+  </div>
+  <div class="cfg-row">
+    <span>按钮大小:</span>
+    <input type="range" id="rng-btn-scale" min="0.65" max="1.30" step="0.05" value="1.0">
+  </div>
+  <div class="cfg-row">
+    <span>按键透明度:</span>
+    <input type="range" id="rng-btn-op" min="0.25" max="1.0" step="0.05" value="0.74">
+  </div>
+</div>
+
+<div id="killfeed"></div>
+
+<div id="center-kill-banner">
+  <div class="title" id="ck-title">你 淘汰了 AI_Player</div>
+  <div class="sub" id="ck-sub">1 KILL(S)</div>
+</div>
+
+<div id="reticle-layer">
+  <div id="hip-crosshair">
+    <div class="ch-line ch-top"></div>
+    <div class="ch-line ch-bottom"></div>
+    <div class="ch-line ch-left"></div>
+    <div class="ch-line ch-right"></div>
+    <div class="ch-dot"></div>
+  </div>
+  <div id="sg-circle"></div>
+  <svg id="hit-marker" viewBox="0 0 30 30">
+    <line x1="4" y1="4" x2="11" y2="11" stroke="#ff2211" stroke-width="2.5"/>
+    <line x1="26" y1="4" x2="19" y2="11" stroke="#ff2211" stroke-width="2.5"/>
+    <line x1="4" y1="26" x2="11" y2="19" stroke="#ff2211" stroke-width="2.5"/>
+    <line x1="26" y1="26" x2="19" y2="19" stroke="#ff2211" stroke-width="2.5"/>
+  </svg>
+  <div id="ads-scope">
+    <svg id="scope-svg" viewBox="0 0 800 450" preserveAspectRatio="xMidYMid slice"></svg>
+  </div>
+</div>
+
+<button id="action-center-btn">🪂 离开飞机跳伞 (F)</button>
+<div id="cast-progress-box">
+  <div id="cast-label" style="font-size:11px;color:#ffd000;font-weight:bold;">正在使用 急救包...</div>
+  <div id="cast-bar-bg"><div id="cast-bar-fill"></div></div>
+</div>
+
+<div id="nearby-loot-float">
+  <h5><span>📦 附近物资</span><span id="loot-count-tag">0</span></h5>
+  <div id="quick-loot-list"></div>
+</div>
+
+<div id="bottom-status">
+  <div id="weapon-slots-bar">
+    <div class="wep-slot active" id="slot-wep-0" title="点击切枪，再点一次切换全自动/单发">
+      <span class="w-name" id="wep-name-0">1: 拳头</span>
+      <span class="w-mode-badge" id="wep-mode-0">--</span>
+      <span class="w-ammo" id="wep-ammo-0">--</span>
+    </div>
+    <div class="wep-slot" id="slot-wep-1" title="点击切枪，再点一次切换全自动/单发">
+      <span class="w-name" id="wep-name-1">2: 空置</span>
+      <span class="w-mode-badge" id="wep-mode-1">--</span>
+      <span class="w-ammo" id="wep-ammo-1">--</span>
+    </div>
+    <div class="wep-slot" id="slot-firemode" style="flex:0.38;justify-content:center;color:#ffa500;font-weight:bold;">
+      切模式
+    </div>
+  </div>
+  <div id="hp-boost-container">
+    <div id="armor-status-row">
+      <span id="hud-helm">🪖 无</span>
+      <span id="hud-vest">🦺 无</span>
+      <span id="hud-bag">🎒 25/150</span>
+    </div>
+    <div id="boost-bar-wrap"><div id="boost-bar-fill"></div></div>
+    <div id="hp-bar-wrap">
+      <div id="hp-bar-fill"></div>
+      <div id="hp-text">HP 100 / 100</div>
+    </div>
+  </div>
+</div>
+
+<div id="joystick-zone"><div id="joystick-knob"></div></div>
+<div class="touch-btn" id="btn-bag">🎒背包</div>
+<div class="touch-btn" id="btn-heal-quick">💊<span id="quick-heal-name">绷带</span></div>
+<div class="touch-btn" id="btn-fire-left">开火</div>
+<div class="touch-btn" id="btn-fire-right">开火<br>压枪</div>
+<div class="touch-btn" id="btn-ads">开镜</div>
+<div class="touch-btn" id="btn-jump">跳</div>
+<div class="touch-btn" id="btn-reload">换弹</div>
+<div class="touch-btn" id="btn-crouch">蹲</div>
+<div class="touch-btn" id="btn-prone">趴</div>
+
+<div id="backpack-modal">
+  <div class="bag-header">
+    <div>
+      <strong style="color:#ffa500;font-size:14px;">🎒 战术背包 & 配件装配台</strong>
+      <span id="bag-weight-header" style="font-size:11px;color:#00ff88;margin-left:10px;font-weight:bold;">容量: 25 / 150</span>
+    </div>
+    <button id="btn-close-bag" style="background:#d9381e;color:#fff;border:none;padding:4px 12px;border-radius:4px;font-weight:bold;font-size:11px;cursor:pointer;">关闭背包</button>
+  </div>
+  <div class="bag-columns">
+    <div class="bag-col">
+      <h4><span>📦 附近地面 / 空投箱</span></h4>
+      <div id="bag-ground-list"></div>
+    </div>
+    <div class="bag-col">
+      <h4><span>🎒 背包物品 (可安装/使用/丢弃)</span></h4>
+      <div id="bag-inventory-list"></div>
+    </div>
+    <div class="bag-col">
+      <h4><span>🔫 已装备武器 (点击配件槽卸下)</span></h4>
+      <div id="bag-weapons-panel"></div>
+    </div>
+  </div>
+</div>
+
+<div id="gameover-modal">
+  <h1 id="go-title">大吉大利，今晚吃鸡！</h1>
+  <p id="go-stats">排名: #1 / 50 | 淘汰数: 8 | 造成伤害: 960</p>
+  <button id="btn-restart" onclick="location.reload()">再来一局</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

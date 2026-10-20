@@ -938,6 +938,26 @@ function moveWithWallCollisions(posVec, dx, dz, radius = 0.48) {
   posVec.z = Math.max(-limit, Math.min(limit, posVec.z));
 }
 
+// 防卡墙：如果某个位置已经处在碰撞体内部（跳伞落进墙/树/石头、空投箱砸在身上），
+// 由内向外螺旋搜索最近的空地并移过去。正常情况下只做一次碰撞查询，几乎零开销
+function pushOutOfColliders(posVec, radius) {
+  if (!isPointBlocked2D(posVec.x, posVec.z, radius)) return false;
+  const limit = MAP_SIZE / 2 - 5;
+  for (let r = 0.3; r <= 14; r += 0.3) {
+    const steps = Math.max(8, Math.ceil(r * 6));
+    for (let i = 0; i < steps; i++) {
+      const a = (i / steps) * Math.PI * 2;
+      const x = posVec.x + Math.cos(a) * r, z = posVec.z + Math.sin(a) * r;
+      if (Math.abs(x) > limit || Math.abs(z) > limit) continue;
+      if (!isPointBlocked2D(x, z, radius)) {
+        posVec.x = x; posVec.z = z;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // 检查一个坐标位于哪栋建筑内部（用于房门导航进出屋）
 function getBuildingContainingPoint(x, z, margin = 0.2) {
   for (let i = 0; i < buildingFootprints.length; i++) {
@@ -3196,6 +3216,7 @@ renderer.domElement.addEventListener("touchcancel", endLookTouch);
 const joyZone = document.getElementById("joystick-zone");
 const joyKnob = document.getElementById("joystick-knob");
 let joyTouchId = null, moveVec = { x: 0, z: 0 };
+let joySprint = false; // 摇杆推到最外圈 → 冲刺（同手游吃鸡的操作习惯）
 
 // 摇杆：行程随按钮缩放自适应、12% 中心死区、外圈 85% 以上直接满速（原版 28px 行程，手指轻微抖动就满速乱跑）
 const JOY_DEADZONE = 0.12;
@@ -3206,6 +3227,7 @@ function updateJoystickFromTouch(t) {
   const maxR = joyZone.offsetWidth * 0.36;
   let dx = (t.clientX - cx) / scale, dy = (t.clientY - cy) / scale;
   const dist = Math.hypot(dx, dy);
+  joySprint = dist >= maxR * 0.95;
   if (dist > maxR) { dx = (dx / dist) * maxR; dy = (dy / dist) * maxR; }
   joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
   const mag = Math.min(1, dist / maxR);
@@ -3234,6 +3256,7 @@ const endJoy = e => {
   for (let i = 0; i < e.changedTouches.length; i++) {
     if (e.changedTouches[i].identifier === joyTouchId) {
       joyTouchId = null;
+      joySprint = false;
       joyKnob.style.transform = "translate(0px, 0px)";
       moveVec.x = 0; moveVec.z = 0;
     }
@@ -3361,6 +3384,7 @@ let lastLootScanTime = 0;
 let lastSecondTick = 0;
 let lastFrameStamp = performance.now();
 let lastLootSignature = "";
+let sprintShown = false;
 // 第一人称持枪晃动（纯视觉）
 let gunBobPhase = 0, gunSwayX = 0, gunSwayY = 0, lastSwayYaw = yaw, lastSwayPitch = pitch;
 
@@ -3427,7 +3451,16 @@ function animate() {
     const step = new THREE.Vector3()
       .addScaledVector(forward, (mz !== 0 ? mz : -0.6) * moveSpeed * dt)
       .addScaledVector(right, mx * moveSpeed * dt);
-    moveWithWallCollisions(playerRig.position, step.x, step.z, 0.5);
+    if (playerRig.position.y > 9) {
+      // 高空中不受地面墙体/树木的平面碰撞阻挡（原版跳伞时在半空会被看不见的墙卡住，甚至直直落进墙里）
+      const limit = MAP_SIZE / 2 - 5;
+      playerRig.position.x = Math.max(-limit, Math.min(limit, playerRig.position.x + step.x));
+      playerRig.position.z = Math.max(-limit, Math.min(limit, playerRig.position.z + step.z));
+    } else {
+      // 接近地面才恢复碰撞；若此刻正好处在墙/树/石头上方，先推到旁边空地
+      pushOutOfColliders(playerRig.position, 0.5);
+      moveWithWallCollisions(playerRig.position, step.x, step.z, 0.5);
+    }
 
     if (player.phase === "sky" && playerRig.position.y <= 55) {
       player.phase = "chute";
@@ -3436,23 +3469,43 @@ function animate() {
     if (playerRig.position.y <= 1.7) {
       player.phase = "ground";
       playerRig.position.y = 1.7;
+      pushOutOfColliders(playerRig.position, 0.48);
       actionBtn.style.display = "none";
       rebuildFPGunModel();
     }
   }
 
   if (player.phase === "ground") {
+    // 防卡墙兜底：被空投箱砸中等极端情况下自动挤出（正常时只是一次碰撞查询）
+    pushOutOfColliders(playerRig.position, 0.48);
+
     let mx = moveVec.x, mz = moveVec.z;
     if (keysPressed["KeyW"]) mz = -1;
     if (keysPressed["KeyS"]) mz = 1;
     if (keysPressed["KeyA"]) mx = -1;
     if (keysPressed["KeyD"]) mx = 1;
 
+    // 冲刺：摇杆推到最外圈并向前（键盘按住 Shift），站姿且未开镜、未开火时移速 +30%
+    const sprinting = (mx !== 0 || mz !== 0) && mz < -0.5 && player.stance === "stand" &&
+      !player.isADS && !player.isFiring && (joySprint || keysPressed["ShiftLeft"] || keysPressed["ShiftRight"]);
+    if (sprinting !== sprintShown) {
+      sprintShown = sprinting;
+      joyKnob.classList.toggle("sprint", sprinting);
+    }
+    // 冲刺时视野略微放大，速度感更强（开镜时由倍镜控制视野，这里不干预）
+    if (!player.isADS) {
+      const targetFov = sprinting ? 80 : 75;
+      if (Math.abs(camera.fov - targetFov) > 0.05) {
+        camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 8);
+        camera.updateProjectionMatrix();
+      }
+    }
+
     if (mx !== 0 || mz !== 0) {
       if (player.casting && player.casting.title.includes("💊")) cancelCastProgress();
       const boostSpeed = player.boost > 60 ? 1.12 : 1.0;
       const stanceSpeed = player.stance === "stand" ? 6.8 : (player.stance === "crouch" ? 4.4 : 2.3);
-      const speed = stanceSpeed * boostSpeed * dt;
+      const speed = stanceSpeed * boostSpeed * (sprinting ? 1.3 : 1.0) * dt;
       const forward = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
       const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
       const moveDelta = new THREE.Vector3()
@@ -3503,8 +3556,8 @@ function animate() {
 
     // 走路晃枪 + 转视角时枪身惯性滞后（只影响枪模显示，不影响准星与弹道）
     const movingNow = mx !== 0 || mz !== 0;
-    gunBobPhase += dt * (movingNow ? (player.stance === "stand" ? 9.5 : 6.5) : 1.6);
-    const bobAmp = movingNow ? 0.011 : 0.0025;
+    gunBobPhase += dt * (movingNow ? (sprinting ? 12.5 : (player.stance === "stand" ? 9.5 : 6.5)) : 1.6);
+    const bobAmp = movingNow ? (sprinting ? 0.018 : 0.011) : 0.0025;
     const dYaw = angleDiff(yaw, lastSwayYaw), dPitch = pitch - lastSwayPitch;
     lastSwayYaw = yaw; lastSwayPitch = pitch;
     const swayK = Math.min(1, dt * 10);
@@ -3578,6 +3631,8 @@ function animate() {
         if (landedOnHouse) {
           bot.group.position.set(landedOnHouse.southDoor.x, 0, landedOnHouse.southDoor.z);
         }
+        // 落在树干/石头/草垛里时挤到旁边空地（原版会永久卡死在里面原地踏步）
+        pushOutOfColliders(bot.group.position, 0.44);
         bot.targetPos.set(
           bot.group.position.x + (Math.random() - 0.5) * 30,
           0,
@@ -3589,6 +3644,7 @@ function animate() {
 
     // 阶段 C：地面战术行动（跑毒 + 进门搜枪 + 7向触须避障 + 交火左右横移走位）
     if (bot.phase === "ground") {
+      pushOutOfColliders(bot.group.position, 0.44);
       const distToSafeCenter = Math.hypot(bot.group.position.x - zoneState.cx, bot.group.position.z - zoneState.cz);
       const isOutsideSafe = distToSafeCenter > zoneState.targetR * 0.90;
       const isInBlueZone = distToSafeCenter > zoneState.curR;

@@ -203,6 +203,11 @@ body, html {
   background: rgba(255, 165, 0, 0.68); border: 1.5px solid #fff; pointer-events: none;
   box-shadow: 0 1px 6px rgba(0,0,0,0.45);
 }
+/* 冲刺状态：摇杆变亮并发光，提示正在疾跑 */
+#joystick-knob.sprint {
+  background: rgba(255, 215, 60, 0.95);
+  box-shadow: 0 0 12px rgba(255, 200, 40, 0.9);
+}
 
 #btn-bag {
   width: 44px; height: 34px; left: 122px; bottom: 12px; border-radius: 8px;

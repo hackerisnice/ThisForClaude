@@ -51,6 +51,8 @@ body, html {
   border-radius: 4px; padding: 3px 4px; font-size: 11px;
 }
 .cfg-val { width: 30px; text-align: right; color: #ffd27d; font-size: 10px; }
+.cfg-switch { flex: 1; display: flex; align-items: center; gap: 5px; color: #ccc; font-size: 10px; }
+.cfg-switch input { width: 16px; height: 16px; flex: none; accent-color: #ffa500; }
 .cfg-note { color: #7fe0a8; font-size: 10px; justify-content: flex-start; }
 
 #minimap-box {
@@ -105,7 +107,7 @@ body, html {
   display: none; position: absolute; inset: 0;
   align-items: center; justify-content: center; pointer-events: none;
 }
-#scope-svg { width: 100vw; height: 100vh; display: block; }
+#scope-svg { width: 100vw; height: 100vh; display: block; transform-origin: 50% 50%; will-change: transform; }
 
 #damage-flash {
   position: absolute; inset: 0; pointer-events: none; z-index: 9;
@@ -202,11 +204,6 @@ body, html {
   width: 34px; height: 34px; border-radius: 50%;
   background: rgba(255, 165, 0, 0.68); border: 1.5px solid #fff; pointer-events: none;
   box-shadow: 0 1px 6px rgba(0,0,0,0.45);
-}
-/* 冲刺状态：摇杆变亮并发光，提示正在疾跑 */
-#joystick-knob.sprint {
-  background: rgba(255, 215, 60, 0.95);
-  box-shadow: 0 0 12px rgba(255, 200, 40, 0.9);
 }
 
 #btn-bag {

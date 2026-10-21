@@ -12,10 +12,11 @@ function showToast(msg) {
 const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile|HarmonyOS/i.test(navigator.userAgent) ||
   (navigator.maxTouchPoints > 1 && Math.min(window.innerWidth, window.innerHeight) < 900);
 
-const gameSettings = { quality: "auto", lookSens: 1.0, adsSens: 1.0, btnScale: 1.0, btnOpacity: 0.74 };
+const gameSettings = { quality: "auto", lookSens: 1.0, adsSens: 1.0, btnScale: 1.0, btnOpacity: 0.74, autoPickup: true };
 try {
   const saved = JSON.parse(localStorage.getItem("pubg_lite_settings") || "{}");
   if (["auto", "low", "mid", "high"].includes(saved.quality)) gameSettings.quality = saved.quality;
+  if (typeof saved.autoPickup === "boolean") gameSettings.autoPickup = saved.autoPickup;
   ["lookSens", "adsSens", "btnScale", "btnOpacity"].forEach(k => {
     if (typeof saved[k] === "number" && isFinite(saved[k])) gameSettings[k] = saved[k];
   });
@@ -35,6 +36,7 @@ function syncSettingsUI() {
   document.getElementById("val-look-sens").innerText = gameSettings.lookSens.toFixed(2);
   document.getElementById("val-ads-sens").innerText = gameSettings.adsSens.toFixed(2);
   document.getElementById("sel-quality").value = gameSettings.quality;
+  document.getElementById("chk-auto-pickup").checked = gameSettings.autoPickup;
 }
 
 document.getElementById("btn-ui-cfg").addEventListener("click", () => {
@@ -62,6 +64,10 @@ document.getElementById("rng-look-sens").addEventListener("input", e => {
 document.getElementById("rng-ads-sens").addEventListener("input", e => {
   gameSettings.adsSens = parseFloat(e.target.value);
   document.getElementById("val-ads-sens").innerText = gameSettings.adsSens.toFixed(2);
+  saveGameSettings();
+});
+document.getElementById("chk-auto-pickup").addEventListener("change", e => {
+  gameSettings.autoPickup = e.target.checked;
   saveGameSettings();
 });
 document.getElementById("sel-quality").addEventListener("change", e => {
@@ -1627,8 +1633,8 @@ const BOT_MAT = {
   skin: [0xe0ac69, 0xc68642, 0xf1c27d, 0x8d5524].map(c => new THREE.MeshLambertMaterial({ color: c })),
   gun: new THREE.MeshLambertMaterial({ color: 0x1a1a1a }),
   boot: new THREE.MeshLambertMaterial({ color: 0x1c1a17 }),
-  vest: new THREE.MeshLambertMaterial({ color: 0x4b5638 }),
-  helmet: new THREE.MeshLambertMaterial({ color: 0x55603f }),
+  vest: [0x7d8778, 0x4b5638, 0x26282a].map(c => new THREE.MeshLambertMaterial({ color: c })),
+  helmet: [0x7d8778, 0x55603f, 0x26282a].map(c => new THREE.MeshLambertMaterial({ color: c })),
   visor: new THREE.MeshLambertMaterial({ color: 0x111316 }),
   pack: new THREE.MeshLambertMaterial({ color: 0x5b4d37 }),
   chute: new THREE.MeshLambertMaterial({ color: 0xffffff, map: chuteTex, side: THREE.DoubleSide })
@@ -1685,22 +1691,21 @@ function createAIBot(id) {
   botGunMesh.visible = false;
 
   // 装备外观（纯视觉）：防弹衣（捡到枪后出现）、头盔、护目镜、背包
-  const vestMesh = new THREE.Mesh(BOT_GEO.vest, BOT_MAT.vest);
+  const vestMesh = new THREE.Mesh(BOT_GEO.vest, BOT_MAT.vest[0]);
   vestMesh.position.y = 1.24 - 0.72;
   vestMesh.visible = false;
   const visor = new THREE.Mesh(BOT_GEO.visor, BOT_MAT.visor);
   visor.position.set(0, 1.93 - 0.72, 0.205);
   const pack = new THREE.Mesh(BOT_GEO.pack, BOT_MAT.pack);
   pack.position.set(0, 1.2 - 0.72, -0.33);
-  upper.add(body, head, armLPivot, armRPivot, botGunMesh, vestMesh, visor, pack);
-  const detailMeshes = [bootL, bootR, visor, pack];
-  if (Math.random() < 0.55) {
-    const helmet = new THREE.Mesh(BOT_GEO.helmet, BOT_MAT.helmet);
-    helmet.position.y = 2.0 - 0.72;
-    helmet.scale.set(1.2, 1.1, 1.2);
-    upper.add(helmet);
-    detailMeshes.push(helmet);
-  }
+  // 头盔 / 背包按 AI 实际捡到的装备等级显示
+  const helmetMesh = new THREE.Mesh(BOT_GEO.helmet, BOT_MAT.helmet[0]);
+  helmetMesh.position.y = 2.0 - 0.72;
+  helmetMesh.scale.set(1.2, 1.1, 1.2);
+  helmetMesh.visible = false;
+  pack.visible = false;
+  upper.add(body, head, armLPivot, armRPivot, botGunMesh, vestMesh, visor, pack, helmetMesh);
+  const detailMeshes = [bootL, bootR, visor];
 
   // 专属空降降落伞模型（跳伞开伞阶段显示）
   const chuteMesh = new THREE.Mesh(BOT_GEO.chute, BOT_MAT.chute);
@@ -1723,11 +1728,24 @@ function createAIBot(id) {
     id,
     name: (AI_NAMES[id % AI_NAMES.length] || "Survivor") + "_" + (10 + id),
     group, legL, legR, body, head, botGunMesh, chuteMesh,
-    legLPivot, legRPivot, upper, armLPivot, armRPivot, vestMesh, detailMeshes, detailShown: true,
+    legLPivot, legRPivot, upper, armLPivot, armRPivot, vestMesh, helmetMesh, packMesh: pack, detailMeshes, detailShown: true,
     phase: "plane", // plane -> sky -> chute -> ground
     hp: 100,
-    armorReduction: 0.10,
     dropTime: 1.2 + (id / 49) * 21.0 + Math.random() * 1.2,
+    // AI 背包：两把主武器（各自配件与弹匣）、头盔/防弹衣/背包等级、药品数量
+    weapons: [null, null],
+    activeSlot: 0,
+    weaponAtts: [{}, {}],
+    mags: [0, 0],
+    helmLv: 0, vestLv: 0, bagLv: 0,
+    meds: 0,
+    lootTarget: null,
+    lootTargetSince: 0,
+    nextLootScan: 0,
+    reloadUntil: 0,
+    swapUntil: 0,
+    nextWeaponEval: 0,
+    healUntil: 0,
     landTarget,
     weaponKey: null,
     targetPos: new THREE.Vector3(0, 0, 0),
@@ -1764,6 +1782,199 @@ function createAIBot(id) {
 }
 
 for (let i = 0; i < 49; i++) createAIBot(i);
+
+// ============================================================================
+// AI 背包与战术：捡第二把枪 / 头盔 / 防弹衣 / 背包 / 药 / 配件，按手中武器决定打法，按距离或弹药换枪
+// ============================================================================
+const BOT_ARMOR_RED = [0.10, 0.30, 0.40, 0.55]; // 无甲时保留原版 10% 基础减伤；1~3 级与玩家防弹衣数值一致
+function botArmorReduction(bot, isHead) {
+  return BOT_ARMOR_RED[isHead ? bot.helmLv : bot.vestLv] || 0.10;
+}
+
+// 各类武器的 AI 打法：每轮连发数、射击间隔、伤害系数、近/远距离单发命中率、最大交战距离、偏好距离、换弹时长
+// （步枪的整体秒伤与原版 AI 基本持平；喷子贴脸极痛但打不远；狙击单发伤害高但慢）
+const AI_WEAPON_PROFILE = {
+  AR:  { volley: 3, cdMin: 750,  cdMax: 1150, dmgMul: 0.30, hitNear: 0.136, hitFar: 0.08,  nearR: 25, farR: 135, maxRange: 135, prefRange: 32, reload: 2300 },
+  SMG: { volley: 4, cdMin: 600,  cdMax: 950,  dmgMul: 0.30, hitNear: 0.145, hitFar: 0.022, nearR: 15, farR: 70,  maxRange: 75,  prefRange: 16, reload: 2000 },
+  LMG: { volley: 5, cdMin: 800,  cdMax: 1200, dmgMul: 0.26, hitNear: 0.095, hitFar: 0.066, nearR: 25, farR: 135, maxRange: 135, prefRange: 38, reload: 4200 },
+  SG:  { volley: 1, cdMin: 950,  cdMax: 1400, dmgMul: 0.20, hitNear: 0.40,  hitFar: 0.0,   nearR: 7,  farR: 30,  maxRange: 30,  prefRange: 9,  reload: 3200 },
+  DMR: { volley: 1, cdMin: 850,  cdMax: 1300, dmgMul: 0.45, hitNear: 0.195, hitFar: 0.16,  nearR: 35, farR: 135, maxRange: 135, prefRange: 50, reload: 2800 },
+  SR:  { volley: 1, cdMin: 1900, cdMax: 2700, dmgMul: 0.60, hitNear: 0.22,  hitFar: 0.18,  nearR: 35, farR: 135, maxRange: 135, prefRange: 60, reload: 3600 }
+};
+// 武器在 近(<18m) / 中(<60m) / 远 距离的适用度，AI 据此决定切哪把枪
+const AI_RANGE_FIT = { SG: [1.0, 0.25, 0.0], SMG: [0.95, 0.6, 0.15], AR: [0.7, 1.0, 0.7], LMG: [0.6, 0.9, 0.75], DMR: [0.35, 0.8, 0.95], SR: [0.2, 0.6, 1.0] };
+const AI_VS_AI_DMG = { AR: 1.0, SMG: 0.9, LMG: 1.0, SG: 1.0, DMR: 1.2, SR: 1.8 };
+const BOT_GUN_LENGTH = { AR: 1.0, SMG: 0.72, LMG: 1.15, SG: 1.05, DMR: 1.25, SR: 1.4 };
+const BOT_MED_CAP = [3, 5, 7, 9]; // 背包等级越高能带的药越多
+
+function botProfile(bot) {
+  return AI_WEAPON_PROFILE[WEAPONS_DATA[bot.weaponKey].type] || AI_WEAPON_PROFILE.AR;
+}
+
+function botMagSize(bot, slot) {
+  const w = WEAPONS_DATA[bot.weapons[slot]];
+  return bot.weaponAtts[slot].mag === "ext_mag" ? w.ext : w.mag;
+}
+
+function botSetActiveSlot(bot, slot) {
+  bot.activeSlot = slot;
+  bot.weaponKey = bot.weapons[slot];
+  bot.botGunMesh.visible = !!bot.weaponKey;
+  if (bot.weaponKey) bot.botGunMesh.scale.set(1, 1, BOT_GUN_LENGTH[WEAPONS_DATA[bot.weaponKey].type] || 1);
+}
+
+function botGiveWeapon(bot, key, atts) {
+  const slot = bot.weapons[0] === null ? 0 : (bot.weapons[1] === null ? 1 : -1);
+  if (slot < 0) return false;
+  bot.weapons[slot] = key;
+  bot.weaponAtts[slot] = Object.assign({}, atts || {});
+  bot.mags[slot] = botMagSize(bot, slot);
+  if (!bot.weaponKey) botSetActiveSlot(bot, slot);
+  return true;
+}
+
+function removeLootEntry(entry) {
+  entry.gone = true;
+  scene.remove(entry.mesh);
+  const idx = worldLootItems.indexOf(entry);
+  if (idx !== -1) worldLootItems.splice(idx, 1);
+}
+
+function botAttachmentTargetSlot(bot, item) {
+  for (let i = 0; i < 2; i++) {
+    const w = bot.weapons[i];
+    if (w && WEAPONS_DATA[w].slots.includes(item.slot) && !bot.weaponAtts[i][item.slot]) return i;
+  }
+  return -1;
+}
+
+// AI 对一件物资的需求度（0 = 不需要）
+function botLootScore(bot, item) {
+  if (item.kind === "weapon") {
+    if (bot.weapons[0] && bot.weapons[1]) return 0;
+    const t = WEAPONS_DATA[item.id].type;
+    const curT = bot.weaponKey ? WEAPONS_DATA[bot.weaponKey].type : null;
+    // 第二把枪优先拿与手上互补的类型（狙+步、喷+步……），同类型的兴趣较低
+    return (WEAPONS_DATA[item.id].airdropOnly ? 3.5 : 2.5) + (curT && curT !== t ? 0.8 : 0) - (curT === t ? 1.2 : 0);
+  }
+  if (item.kind === "gear") {
+    const cur = item.sub === "helm" ? bot.helmLv : (item.sub === "vest" ? bot.vestLv : bot.bagLv);
+    return item.lv > cur ? 1.6 + (item.lv - cur) * 0.4 : 0;
+  }
+  if (item.kind === "med") return bot.meds < BOT_MED_CAP[bot.bagLv] ? 1.0 : 0;
+  if (item.kind === "attachment") return botAttachmentTargetSlot(bot, item) >= 0 ? 0.8 : 0;
+  return 0;
+}
+
+// 在 38 米内挑一个“需求度 / 距离”最划算的物资作为搜刮目标（每个 AI 约 1 秒扫描一次）
+function scanBotLootTarget(bot, now) {
+  const bx = bot.group.position.x, bz = bot.group.position.z;
+  let best = null, bestScore = 0;
+  for (let i = 0; i < worldLootItems.length; i++) {
+    const e = worldLootItems[i];
+    const dx = e.x - bx, dz = e.z - bz;
+    const d2 = dx * dx + dz * dz;
+    if (d2 > 1444) continue;
+    const s = botLootScore(bot, e.item);
+    if (s <= 0) continue;
+    const score = s / (1 + Math.sqrt(d2) / 10);
+    if (score > bestScore) { bestScore = score; best = e; }
+  }
+  if (best !== bot.lootTarget) bot.lootTargetSince = now;
+  bot.lootTarget = best;
+}
+
+function botPickupLoot(bot, entry, now) {
+  const it = entry.item;
+  if (botLootScore(bot, it) <= 0) return;
+  if (it.kind === "weapon") {
+    botGiveWeapon(bot, it.id, it.attachments);
+  } else if (it.kind === "gear") {
+    if (it.sub === "helm") bot.helmLv = it.lv;
+    else if (it.sub === "vest") bot.vestLv = it.lv;
+    else bot.bagLv = it.lv;
+  } else if (it.kind === "med") {
+    bot.meds = Math.min(BOT_MED_CAP[bot.bagLv], bot.meds + (it.count || 1));
+  } else if (it.kind === "attachment") {
+    bot.weaponAtts[botAttachmentTargetSlot(bot, it)][it.slot] = it.id;
+  }
+  removeLootEntry(entry);
+  bot.pauseUntil = now + 300 + Math.random() * 500; // 捡东西的短暂停顿
+}
+
+// 命中率：随距离从近距值过渡到远距值；倍镜提升远距离命中、枪口/握把更稳；玩家蹲/趴更难被打中
+function botHitChance(bot, prof, dist) {
+  let p = prof.hitNear + (prof.hitFar - prof.hitNear) * smoothstep(prof.nearR, prof.farR, dist);
+  const atts = bot.weaponAtts[bot.activeSlot];
+  if (atts.scope && dist > 40) p *= 1.3;
+  if (atts.muzzle) p *= 1.08;
+  if (atts.grip) p *= 1.08;
+  if (player.stance === "crouch") p *= 0.9;
+  else if (player.stance === "prone") p *= 0.75;
+  return p;
+}
+
+function botShotDamage(wData, prof, dist) {
+  if (wData.type === "SG") {
+    const falloff = 1 - smoothstep(6, 28, dist) * 0.8;
+    return Math.round(wData.pellets * wData.dmgPerPellet * prof.dmgMul * falloff * (0.8 + Math.random() * 0.4));
+  }
+  return Math.round(wData.dmg * prof.dmgMul * (0.85 + Math.random() * 0.3));
+}
+
+// 换枪：按交战距离选最合适的枪（近距离切喷子/冲锋枪，远距离切狙击/连狙），没子弹的枪优先级降低
+function botConsiderWeaponSwitch(bot, dist, now) {
+  const other = 1 - bot.activeSlot;
+  if (!bot.weapons[other] || now < bot.swapUntil) return;
+  const band = dist < 18 ? 0 : (dist < 60 ? 1 : 2);
+  const fit = slot => AI_RANGE_FIT[WEAPONS_DATA[bot.weapons[slot]].type][band] - (bot.mags[slot] <= 0 ? 0.35 : 0);
+  if (fit(other) > fit(bot.activeSlot) + 0.2) {
+    botSetActiveSlot(bot, other);
+    bot.swapUntil = now + 600;
+    if (bot.mags[other] <= 0) {
+      // 切回来的是空枪：切完顺手换弹（例如喷子打空后先用副武器顶住，再切回喷子装填）
+      bot.reloadUntil = now + 600 + botProfile(bot).reload;
+      bot.mags[other] = botMagSize(bot, other);
+    } else {
+      bot.reloadUntil = 0;
+    }
+  }
+}
+
+// 打完一轮：扣弹匣；打空时近距离直接切副武器（比换弹快），否则原地换弹
+function botAfterShots(bot, shots, dist, now) {
+  const slot = bot.activeSlot;
+  bot.mags[slot] -= shots;
+  if (bot.mags[slot] > 0) return;
+  const other = 1 - slot;
+  if (dist < 30 && bot.weapons[other] && bot.mags[other] > 0) {
+    botSetActiveSlot(bot, other);
+    bot.swapUntil = now + 550;
+  } else {
+    bot.reloadUntil = now + botProfile(bot).reload;
+    bot.mags[slot] = botMagSize(bot, slot);
+  }
+}
+
+// 向玩家打一轮连发：每发按射速间隔播放枪声并独立判定命中
+function botFireAtPlayer(bot, dist, now) {
+  const wData = WEAPONS_DATA[bot.weaponKey];
+  const prof = botProfile(bot);
+  const shots = Math.max(1, Math.min(prof.volley, bot.mags[bot.activeSlot]));
+  const hitP = botHitChance(bot, prof, dist);
+  const isSupp = bot.weaponAtts[bot.activeSlot].muzzle === "supp";
+  const gap = Math.max(50, 60000 / wData.rpm);
+  for (let s = 0; s < shots; s++) {
+    setTimeout(() => {
+      if (!bot.alive || player.phase !== "ground") return;
+      const d = bot.group.position.distanceTo(playerRig.position);
+      sfx.playShot(isSupp, 1.0, d);
+      registerRadarSound("shot", bot.group.position.x, bot.group.position.z, isSupp);
+      if (Math.random() < hitP) damagePlayer(botShotDamage(wData, prof, d), bot.name, wData.name);
+    }, s * gap);
+  }
+  botAfterShots(bot, shots, dist, now);
+}
 
 // 计算 AI 的下一个导航子目标（自动进出房门、自动找桥过河）
 function computeAINavSubTarget(botPos, finalGoal) {
@@ -1932,10 +2143,22 @@ function animateBotBody(bot, dt, aiming, distToPlayer, now) {
   bot.armRPivot.rotation.z = 0.06 * (1 - aim);
 
   bot.botGunMesh.position.set(0.16 - 0.04 * aim, 0.42 + 0.3 * aim, 0.3 + 0.14 * aim);
-  bot.botGunMesh.rotation.x = 0.55 * (1 - aim);
-  bot.vestMesh.visible = bot.armorReduction >= 0.25;
+  // 换弹 / 切枪时枪口下压晃动，打药时双手收在胸前
+  const reloading = now < bot.reloadUntil || now < bot.swapUntil;
+  bot.botGunMesh.rotation.x = 0.55 * (1 - aim) + (reloading ? 0.35 + Math.sin(now * 0.012) * 0.15 : 0);
+  if (bot.healUntil > 0) {
+    bot.armLPivot.rotation.set(-0.9, 0.5, 0);
+    bot.armRPivot.rotation.set(-0.9, -0.5, 0);
+  }
 
+  // 装备外观随 AI 实际捡到的等级变化（防弹衣/头盔颜色 = 等级，背包大小 = 等级）
+  bot.vestMesh.visible = bot.vestLv > 0;
+  if (bot.vestLv > 0) bot.vestMesh.material = BOT_MAT.vest[bot.vestLv - 1];
   const showDetail = distToPlayer < quality.detailDist;
+  bot.helmetMesh.visible = showDetail && bot.helmLv > 0;
+  if (bot.helmLv > 0) bot.helmetMesh.material = BOT_MAT.helmet[bot.helmLv - 1];
+  bot.packMesh.visible = showDetail && bot.bagLv > 0;
+  if (bot.bagLv > 0) bot.packMesh.scale.setScalar(0.75 + bot.bagLv * 0.15);
   if (showDetail !== bot.detailShown) {
     bot.detailShown = showDetail;
     bot.detailMeshes.forEach(m => { m.visible = showDetail; });
@@ -2280,7 +2503,8 @@ function fireCurrentWeapon() {
           const isHead = hit.object.userData.isHead;
           if (isHead) anyHeadshot = true;
           const rawDmg = base.type === "SG" ? base.dmgPerPellet : base.dmg;
-          const finalDmg = Math.round(rawDmg * (isHead ? 2.35 : 1.0) * (1 - bot.armorReduction));
+          // 爆头按 AI 头盔等级减伤，打身体按防弹衣等级减伤
+          const finalDmg = Math.round(rawDmg * (isHead ? 2.35 : 1.0) * (1 - botArmorReduction(bot, isHead)));
           bot.hp -= finalDmg;
           player.totalDmg += finalDmg;
           spawnBloodEffect(hit.point);
@@ -2385,12 +2609,21 @@ function killAIBot(bot, killerName, weaponName, isHeadshot, byPlayer = false) {
   freezeObject(crate);
 
   const bx = bot.group.position.x, bz = bot.group.position.z;
-  if (bot.weaponKey) {
-    spawnRandomGroundLoot(bx + 0.35, bz, {
-      kind: "weapon", id: bot.weaponKey, name: WEAPONS_DATA[bot.weaponKey].name,
-      ammoInMag: WEAPONS_DATA[bot.weaponKey].mag, attachments: {}
+  // 盒子掉落 AI 身上的全部装备：两把枪（连同配件）+ 对应子弹、头盔、防弹衣、背包、药品
+  bot.weapons.forEach((wk, i) => {
+    if (!wk) return;
+    const wd = WEAPONS_DATA[wk];
+    spawnRandomGroundLoot(bx + 0.35, bz - 0.3 + i * 0.6, {
+      kind: "weapon", id: wk, name: wd.name, ammoInMag: wd.mag, attachments: Object.assign({}, bot.weaponAtts[i])
     });
-  }
+    spawnRandomGroundLoot(bx + 0.85, bz - 0.3 + i * 0.6, {
+      kind: "ammo", id: wd.ammoType, name: `${wd.ammoType} 子弹`, count: wd.type === "SG" ? 10 : 30
+    });
+  });
+  if (bot.helmLv) spawnRandomGroundLoot(bx - 0.45, bz - 0.35, { kind: "gear", sub: "helm", name: `${bot.helmLv}级头盔`, lv: bot.helmLv, dur: bot.helmLv * 80, maxDur: bot.helmLv * 80 });
+  if (bot.vestLv) spawnRandomGroundLoot(bx - 0.45, bz + 0.15, { kind: "gear", sub: "vest", name: `${bot.vestLv}级防弹衣`, lv: bot.vestLv, dur: bot.vestLv * 100, maxDur: bot.vestLv * 100 });
+  if (bot.bagLv) spawnRandomGroundLoot(bx - 0.9, bz - 0.1, { kind: "gear", sub: "bag", name: `${bot.bagLv}级背包`, lv: bot.bagLv, capBonus: bot.bagLv * 70 });
+  if (bot.meds > 0) spawnRandomGroundLoot(bx, bz + 0.6, { kind: "med", id: "firstaid", name: MEDS_DATA.firstaid.name, count: Math.min(3, bot.meds) });
   spawnRandomGroundLoot(bx - 0.35, bz + 0.25);
 
   const aliveNow = aiPlayers.filter(a => a.alive).length + (player.phase !== "dead" ? 1 : 0);
@@ -2465,19 +2698,42 @@ function pickupLootObject(lootEntry) {
   if (it.kind === "weapon") {
     let targetSlot = player.weapons[0] === null ? 0 : (player.weapons[1] === null ? 1 : player.activeSlot);
     const oldWep = player.weapons[targetSlot];
+    const newAtts = Object.assign({}, it.attachments || {});
     if (oldWep) {
+      // 端游同款换枪：旧枪上的配件自动装到新枪上；新枪装不上的放进背包；背包也满了才随旧枪留在地上
+      // （原版会把配件连同旧枪一起丢在地上，看起来就像配件“莫名其妙消失”了）
+      const newSlots = WEAPONS_DATA[it.id].slots;
+      const keptOnOld = {}, moved = [], bagged = [];
+      Object.keys(oldWep.attachments).forEach(slot => {
+        const attId = oldWep.attachments[slot];
+        const a = ATTACHMENTS_DATA[attId];
+        if (!a) return;
+        if (newSlots.includes(slot) && !newAtts[slot]) {
+          newAtts[slot] = attId;
+          moved.push(a.name);
+        } else if (getUsedBagWeight() + (a.weight || 10) <= player.maxCap) {
+          player.attBag.push({ id: a.id, name: a.name, slot: a.slot });
+          bagged.push(a.name);
+        } else {
+          keptOnOld[slot] = attId;
+        }
+      });
       spawnRandomGroundLoot(
         playerRig.position.x + (Math.random() - 0.5) * 1.2,
         playerRig.position.z + (Math.random() - 0.5) * 1.2,
-        { kind: "weapon", id: oldWep.id, name: oldWep.name, ammoInMag: oldWep.ammoInMag, attachments: oldWep.attachments }
+        { kind: "weapon", id: oldWep.id, name: oldWep.name, ammoInMag: oldWep.ammoInMag, attachments: keptOnOld, noAutoPickup: true }
       );
+      const msg = [];
+      if (moved.length) msg.push(`配件已转移到新枪：${moved.join("、")}`);
+      if (bagged.length) msg.push(`放入背包：${bagged.join("、")}`);
+      if (msg.length) showToast("🔧 " + msg.join("；"));
     }
     player.weapons[targetSlot] = {
       id: it.id,
       name: it.name.replace("🔥", ""),
       ammoInMag: it.ammoInMag,
       fireMode: WEAPONS_DATA[it.id].modes[0],
-      attachments: it.attachments || {}
+      attachments: newAtts
     };
     player.activeSlot = targetSlot;
     rebuildFPGunModel();
@@ -2529,11 +2785,70 @@ function pickupLootObject(lootEntry) {
     }
   }
 
+  lootEntry.gone = true;
   scene.remove(lootEntry.mesh);
   worldLootItems.splice(idx, 1);
   sfx.playBoltAction();
   updateAllHUD();
   if (document.getElementById("backpack-modal").style.display === "flex") renderBackpackModal();
+}
+
+// ---------------------------------------------------------------------------
+// 自动拾取（仿手游）：武器栏有空位时自动捡枪；自动捡手中枪械的子弹、更高级的头盔/甲/背包、
+// 当前枪空位可装的配件、少量药品。自己从背包丢出的东西不会被再次自动捡起
+// ---------------------------------------------------------------------------
+const AUTO_MED_LIMIT = { medkit: 1, firstaid: 3, bandage: 8, adrenaline: 1, painkiller: 3, drink: 4 };
+const AUTO_AMMO_LIMIT = 240;
+
+function wantsAutoPickup(it) {
+  if (it.noAutoPickup) return false;
+  const freeW = player.maxCap - getUsedBagWeight();
+  if (it.kind === "weapon") return player.weapons[0] === null || player.weapons[1] === null;
+  if (it.kind === "ammo") {
+    return player.weapons.some(w => w && WEAPONS_DATA[w.id].ammoType === it.id) &&
+      (player.ammoBag[it.id] || 0) < AUTO_AMMO_LIMIT && freeW >= (AMMO_WEIGHT[it.id] || 0.5);
+  }
+  if (it.kind === "gear") {
+    if (it.sub === "helm") return !player.helm || it.lv > player.helm.lv;
+    if (it.sub === "vest") return !player.vest || it.lv > player.vest.lv;
+    return it.lv > player.bagLv;
+  }
+  if (it.kind === "med") {
+    return (player.medBag[it.id] || 0) < (AUTO_MED_LIMIT[it.id] || 0) &&
+      freeW >= (MEDS_DATA[it.id]?.weight || 5) * (it.count || 1);
+  }
+  if (it.kind === "attachment") {
+    const w = player.weapons[player.activeSlot];
+    return !!w && WEAPONS_DATA[w.id].slots.includes(it.slot) && !w.attachments[it.slot];
+  }
+  return false;
+}
+
+// 玩家与物资之间没有墙才自动捡（防止隔墙吸物资）
+function isLootReachable(px, pz, lx, lz) {
+  const d = Math.hypot(lx - px, lz - pz);
+  const steps = Math.ceil(d / 0.25);
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    if (t * d > d - 0.35) break;
+    if (isPointBlocked2D(px + (lx - px) * t, pz + (lz - pz) * t, 0.02)) return false;
+  }
+  return true;
+}
+
+function tryAutoPickup(near) {
+  if (!gameSettings.autoPickup || player.phase !== "ground") return;
+  const px = playerRig.position.x, pz = playerRig.position.z;
+  let best = null, bestD = 2.4;
+  for (let i = 0; i < near.length; i++) {
+    const e = near[i];
+    const d = Math.hypot(e.x - px, e.z - pz);
+    if (d < bestD && wantsAutoPickup(e.item) && isLootReachable(px, pz, e.x, e.z)) { best = e; bestD = d; }
+  }
+  if (!best) return;
+  const name = best.item.name + (best.item.count ? " x" + best.item.count : "");
+  pickupLootObject(best);
+  if (best.gone) showToast(`✅ 自动拾取：${name}`);
 }
 
 window.dropAttachmentFromBag = function(attIndex) {
@@ -2543,7 +2858,7 @@ window.dropAttachmentFromBag = function(attIndex) {
   spawnRandomGroundLoot(
     playerRig.position.x + (Math.random() - 0.5) * 1.4,
     playerRig.position.z + (Math.random() - 0.5) * 1.4,
-    { kind: "attachment", id: att.id, name: att.name, slot: att.slot }
+    { kind: "attachment", id: att.id, name: att.name, slot: att.slot, noAutoPickup: true }
   );
   sfx.playBoltAction();
   updateAllHUD();
@@ -2556,7 +2871,7 @@ window.dropMedFromBag = function(medId) {
   spawnRandomGroundLoot(
     playerRig.position.x + (Math.random() - 0.5) * 1.4,
     playerRig.position.z + (Math.random() - 0.5) * 1.4,
-    { kind: "med", id: medId, name: MEDS_DATA[medId].name, count: 1 }
+    { kind: "med", id: medId, name: MEDS_DATA[medId].name, count: 1, noAutoPickup: true }
   );
   sfx.playBoltAction();
   updateAllHUD();
@@ -2571,7 +2886,7 @@ window.dropAmmoFromBag = function(ammoKey, dropAll = false) {
   spawnRandomGroundLoot(
     playerRig.position.x + (Math.random() - 0.5) * 1.4,
     playerRig.position.z + (Math.random() - 0.5) * 1.4,
-    { kind: "ammo", id: ammoKey, name: `${ammoKey} 子弹`, count: amount }
+    { kind: "ammo", id: ammoKey, name: `${ammoKey} 子弹`, count: amount, noAutoPickup: true }
   );
   sfx.playBoltAction();
   updateAllHUD();
@@ -2805,35 +3120,56 @@ function buildScopeOrIronSightSVG(wep, scopeId) {
     }
   }
 
+  // 准星发光滤镜（SVG 原生滤镜，兼容所有手机浏览器）
+  const glowDefs = `
+    <defs><filter id="reticle-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter></defs>`;
+  // 2 倍以上倍镜：目镜外全部遮黑，只透过镜片看（端游效果）
+  const eyepieceMask = r => `
+    <path fill-rule="evenodd" fill="#050607"
+      d="M-400,-400 H1200 V850 H-400 Z M${400 - r},225 a${r},${r} 0 1,0 ${2 * r},0 a${r},${r} 0 1,0 ${-2 * r},0 Z"/>`;
+
   if (scopeId === "reddot") {
     return `
+      ${glowDefs}
       ${railBase}
       <rect x="342" y="268" width="116" height="82" rx="8" fill="#1c2026" stroke="#0d0f12" stroke-width="2.5"/>
       <rect x="352" y="276" width="96" height="32" rx="4" fill="#252a32"/>
       <path d="M350,272 C332,162 468,162 450,272 Z" fill="rgba(160,210,230,0.05)" stroke="#181b20" stroke-width="11" stroke-linejoin="round"/>
-      <circle cx="400" cy="225" r="3.2" fill="#ff1e1e" filter="drop-shadow(0 0 5px #ff0000)"/>
+      <circle cx="400" cy="225" r="3.2" fill="#ff1e1e" filter="url(#reticle-glow)"/>
     `;
   }
 
   if (scopeId === "holo") {
+    // 全息镜：镜框中间挖空成透明观察窗（原版用实心色块铺满，开镜后正前方是一块黑板，什么都看不见）
     return `
+      ${glowDefs}
       ${railBase}
-      <path d="M312,355 L322,128 Q325,110 345,110 L455,110 Q475,110 478,128 L488,355 Z" fill="#15181c" stroke="#090b0d" stroke-width="3"/>
-      <rect x="345" y="138" width="110" height="106" rx="12" fill="rgba(10,15,20,0.12)" stroke="#272c33" stroke-width="5"/>
-      <circle cx="400" cy="285" r="14" fill="#20242a" stroke="#0d0f12" stroke-width="2"/>
-      <text x="400" y="289" fill="#7c8591" font-size="10" font-weight="bold" text-anchor="middle">NV</text>
-      <rect x="352" y="298" width="28" height="16" rx="2" fill="#1d2127" stroke="#0e1013" stroke-width="1.5"/>
-      <rect x="420" y="298" width="28" height="16" rx="2" fill="#1d2127" stroke="#0e1013" stroke-width="1.5"/>
-      <text x="400" y="312" fill="#68707a" font-size="9" font-weight="bold" text-anchor="middle">- OFF -</text>
-      <circle cx="364" cy="332" r="10" fill="#101215" stroke="#2c313a" stroke-width="1.5"/>
-      <circle cx="436" cy="332" r="10" fill="#101215" stroke="#2c313a" stroke-width="1.5"/>
-      <circle cx="400" cy="225" r="16" fill="none" stroke="#ff261b" stroke-width="1.6" stroke-dasharray="7 2.5"/>
-      <circle cx="400" cy="225" r="2.0" fill="#ff261b"/>
+      <path fill-rule="evenodd" fill="#15181c" stroke="#090b0d" stroke-width="3"
+        d="M268,362 L278,116 Q281,88 310,88 L490,88 Q519,88 522,116 L532,362 Z
+           M318,124 L482,124 Q494,124 494,136 L494,296 Q494,308 482,308 L318,308 Q306,308 306,296 L306,136 Q306,124 318,124 Z"/>
+      <rect x="306" y="124" width="188" height="184" rx="12" fill="rgba(140,200,215,0.05)" stroke="#2b3139" stroke-width="4"/>
+      <rect x="352" y="318" width="28" height="15" rx="2" fill="#1d2127" stroke="#0e1013" stroke-width="1.5"/>
+      <rect x="420" y="318" width="28" height="15" rx="2" fill="#1d2127" stroke="#0e1013" stroke-width="1.5"/>
+      <text x="400" y="330" fill="#68707a" font-size="9" font-weight="bold" text-anchor="middle">EXPS3</text>
+      <circle cx="292" cy="200" r="9" fill="#101215" stroke="#2c313a" stroke-width="1.5"/>
+      <circle cx="508" cy="200" r="9" fill="#101215" stroke="#2c313a" stroke-width="1.5"/>
+      <g filter="url(#reticle-glow)" stroke="#ff2a1c" fill="none">
+        <circle cx="400" cy="225" r="26" stroke-width="1.8"/>
+        <line x1="400" y1="195" x2="400" y2="203" stroke-width="1.8"/>
+        <line x1="400" y1="247" x2="400" y2="255" stroke-width="1.8"/>
+        <line x1="370" y1="225" x2="378" y2="225" stroke-width="1.8"/>
+        <line x1="422" y1="225" x2="430" y2="225" stroke-width="1.8"/>
+        <circle cx="400" cy="225" r="2.1" fill="#ff2a1c" stroke="none"/>
+      </g>
     `;
   }
 
   if (scopeId === "2x") {
     return `
+      ${eyepieceMask(116)}
       ${railBase}
       <circle cx="478" cy="118" r="38" fill="#1a1d22" stroke="#0b0d0f" stroke-width="3"/>
       <rect x="485" y="185" width="46" height="68" rx="6" fill="#181b20" stroke="#0b0d0f" stroke-width="2.5"/>
@@ -2848,6 +3184,7 @@ function buildScopeOrIronSightSVG(wep, scopeId) {
 
   if (scopeId === "3x" || scopeId === "4x") {
     return `
+      ${eyepieceMask(150)}
       ${railBase}
       <rect x="348" y="42" width="104" height="38" rx="4" fill="#111317" stroke="#000" stroke-width="2"/>
       <text x="400" y="65" fill="#99a3ad" font-size="8" letter-spacing="4" text-anchor="middle">NW  N  NE  E</text>
@@ -2872,6 +3209,7 @@ function buildScopeOrIronSightSVG(wep, scopeId) {
   }
 
   return `
+    ${eyepieceMask(200)}
     <path d="M372,395 L380,315 L387,315 L384,395 Z" fill="rgba(12,14,18,0.88)"/>
     <path d="M428,395 L420,315 L413,315 L416,395 Z" fill="rgba(12,14,18,0.88)"/>
     <path d="M368,395 L432,395 L440,450 L360,450 Z" fill="#0d0f12"/>
@@ -2887,34 +3225,60 @@ function buildScopeOrIronSightSVG(wep, scopeId) {
   `;
 }
 
+// 开镜过程动画（仿端游）：枪身抬到眼前 → 视野平滑拉近 → 镜片画面淡入放大；关镜时反向播放
+// t: 0 = 腰射，1 = 完全开镜。倍率越高抬枪越慢（红点约 0.17 秒，8 倍约 0.32 秒）
+const adsAnim = { t: 0, active: false, targetFov: 75, dur: 0.18, sightY: 0.075, svgKey: "", lastOverlay: -1 };
+const adsScopeEl = document.getElementById("ads-scope");
+const scopeSvgEl = document.getElementById("scope-svg");
+
 function updateScopeState() {
   const curWep = player.weapons[player.activeSlot];
   if (!curWep || !player.isADS || player.phase !== "ground") {
+    adsAnim.active = false;
     document.getElementById("hip-crosshair").style.display = "block";
-    document.getElementById("ads-scope").style.display = "none";
-    fpGunGroup.visible = true;
-    camera.fov = 75;
-    camera.updateProjectionMatrix();
     updateAllHUD();
     return;
   }
 
+  adsAnim.active = true;
   document.getElementById("hip-crosshair").style.display = "none";
   document.getElementById("sg-circle").style.display = "none";
-  document.getElementById("ads-scope").style.display = "flex";
-  fpGunGroup.visible = false;
 
   const scopeId = curWep.attachments.scope || "iron";
-  const svg = document.getElementById("scope-svg");
-
-  if (scopeId === "iron") {
-    camera.fov = 65;
-  } else {
-    const att = ATTACHMENTS_DATA[scopeId];
-    camera.fov = att ? att.fov : 55;
+  const att = ATTACHMENTS_DATA[scopeId];
+  adsAnim.targetFov = scopeId === "iron" ? 65 : (att ? att.fov : 55);
+  const zoom = scopeId === "iron" ? 1.1 : (att ? att.zoom : 1.35);
+  adsAnim.dur = 0.16 + Math.min(0.16, (zoom - 1) * 0.023);
+  adsAnim.sightY = scopeId === "iron" ? 0.075 : 0.105;
+  const svgKey = curWep.id + "|" + scopeId;
+  if (svgKey !== adsAnim.svgKey) {
+    adsAnim.svgKey = svgKey;
+    scopeSvgEl.innerHTML = buildScopeOrIronSightSVG(curWep, scopeId);
   }
-  svg.innerHTML = buildScopeOrIronSightSVG(curWep, scopeId);
-  camera.updateProjectionMatrix();
+}
+
+function updateADSAnimation(dt) {
+  const goal = adsAnim.active ? 1 : 0;
+  const rate = 1 / Math.max(0.05, adsAnim.dur);
+  if (adsAnim.t < goal) adsAnim.t = Math.min(goal, adsAnim.t + dt * rate);
+  else if (adsAnim.t > goal) adsAnim.t = Math.max(goal, adsAnim.t - dt * rate * 1.35);
+  const e = adsAnim.t * adsAnim.t * (3 - 2 * adsAnim.t);
+
+  const fov = 75 + (adsAnim.targetFov - 75) * e;
+  if (Math.abs(camera.fov - fov) > 0.01) {
+    camera.fov = fov;
+    camera.updateProjectionMatrix();
+  }
+  // 镜片画面在抬枪后半程淡入，并从略大缩放到正常（贴近眼睛的感觉）
+  const overlay = Math.round(smoothstep(0.55, 1.0, adsAnim.t) * 100) / 100;
+  if (overlay !== adsAnim.lastOverlay) {
+    adsAnim.lastOverlay = overlay;
+    adsScopeEl.style.display = overlay > 0 ? "flex" : "none";
+    adsScopeEl.style.opacity = overlay;
+    scopeSvgEl.style.transform = `scale(${(1 + (1 - overlay) * 0.22).toFixed(3)})`;
+  }
+  fpGunGroup.visible = adsAnim.t < 0.92;
+  return e;
 }
 
 // ============================================================================
@@ -3216,9 +3580,8 @@ renderer.domElement.addEventListener("touchcancel", endLookTouch);
 const joyZone = document.getElementById("joystick-zone");
 const joyKnob = document.getElementById("joystick-knob");
 let joyTouchId = null, moveVec = { x: 0, z: 0 };
-let joySprint = false; // 摇杆推到最外圈 → 冲刺（同手游吃鸡的操作习惯）
 
-// 摇杆：行程随按钮缩放自适应、12% 中心死区、外圈 85% 以上直接满速（原版 28px 行程，手指轻微抖动就满速乱跑）
+// 摇杆：行程随按钮缩放自适应、12% 中心死区；取消走路——推出死区即按冲刺速度全速移动，摇杆只决定方向
 const JOY_DEADZONE = 0.12;
 function updateJoystickFromTouch(t) {
   const rect = joyZone.getBoundingClientRect();
@@ -3227,15 +3590,11 @@ function updateJoystickFromTouch(t) {
   const maxR = joyZone.offsetWidth * 0.36;
   let dx = (t.clientX - cx) / scale, dy = (t.clientY - cy) / scale;
   const dist = Math.hypot(dx, dy);
-  joySprint = dist >= maxR * 0.95;
   if (dist > maxR) { dx = (dx / dist) * maxR; dy = (dy / dist) * maxR; }
   joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
-  const mag = Math.min(1, dist / maxR);
-  if (mag < JOY_DEADZONE) { moveVec.x = 0; moveVec.z = 0; return; }
-  let m = (mag - JOY_DEADZONE) / (1 - JOY_DEADZONE);
-  if (m > 0.85) m = 1;
-  moveVec.x = (dx / Math.max(dist, 0.001)) * m;
-  moveVec.z = (dy / Math.max(dist, 0.001)) * m;
+  if (dist / maxR < JOY_DEADZONE) { moveVec.x = 0; moveVec.z = 0; return; }
+  moveVec.x = dx / Math.max(dist, 0.001);
+  moveVec.z = dy / Math.max(dist, 0.001);
 }
 
 joyZone.addEventListener("touchstart", e => {
@@ -3256,7 +3615,6 @@ const endJoy = e => {
   for (let i = 0; i < e.changedTouches.length; i++) {
     if (e.changedTouches[i].identifier === joyTouchId) {
       joyTouchId = null;
-      joySprint = false;
       joyKnob.style.transform = "translate(0px, 0px)";
       moveVec.x = 0; moveVec.z = 0;
     }
@@ -3384,9 +3742,10 @@ let lastLootScanTime = 0;
 let lastSecondTick = 0;
 let lastFrameStamp = performance.now();
 let lastLootSignature = "";
-let sprintShown = false;
 // 第一人称持枪晃动（纯视觉）
 let gunBobPhase = 0, gunSwayX = 0, gunSwayY = 0, lastSwayYaw = yaw, lastSwayPitch = pitch;
+const PLAYER_SPRINT_MULT = 1.3; // 玩家移动一律按冲刺速度（原步行速度 × 1.3）
+let lastAutoPickupTime = 0;
 
 function animate() {
   requestAnimationFrame(animate);
@@ -3396,6 +3755,7 @@ function animate() {
   updateAutoQuality(Math.min((now - lastFrameStamp) / 1000, 0.5));
   lastFrameStamp = now;
   quality.frameCounter++;
+  const adsEase = updateADSAnimation(dt);
 
   // 空投刷新与降落
   if (elapsed >= nextAirdropTime) {
@@ -3485,27 +3845,12 @@ function animate() {
     if (keysPressed["KeyA"]) mx = -1;
     if (keysPressed["KeyD"]) mx = 1;
 
-    // 冲刺：摇杆推到最外圈并向前（键盘按住 Shift），站姿且未开镜、未开火时移速 +30%
-    const sprinting = (mx !== 0 || mz !== 0) && mz < -0.5 && player.stance === "stand" &&
-      !player.isADS && !player.isFiring && (joySprint || keysPressed["ShiftLeft"] || keysPressed["ShiftRight"]);
-    if (sprinting !== sprintShown) {
-      sprintShown = sprinting;
-      joyKnob.classList.toggle("sprint", sprinting);
-    }
-    // 冲刺时视野略微放大，速度感更强（开镜时由倍镜控制视野，这里不干预）
-    if (!player.isADS) {
-      const targetFov = sprinting ? 80 : 75;
-      if (Math.abs(camera.fov - targetFov) > 0.05) {
-        camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 8);
-        camera.updateProjectionMatrix();
-      }
-    }
-
     if (mx !== 0 || mz !== 0) {
       if (player.casting && player.casting.title.includes("💊")) cancelCastProgress();
       const boostSpeed = player.boost > 60 ? 1.12 : 1.0;
       const stanceSpeed = player.stance === "stand" ? 6.8 : (player.stance === "crouch" ? 4.4 : 2.3);
-      const speed = stanceSpeed * boostSpeed * (sprinting ? 1.3 : 1.0) * dt;
+      // 取消走路：所有姿态一律按冲刺速度移动（站立 8.84 m/s，蹲 5.7，趴 3.0）
+      const speed = stanceSpeed * boostSpeed * PLAYER_SPRINT_MULT * dt;
       const forward = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
       const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
       const moveDelta = new THREE.Vector3()
@@ -3552,19 +3897,28 @@ function animate() {
     } else {
       fpGunGroup.rotation.x += (0 - fpGunGroup.rotation.x) * 12 * dt;
     }
-    fpGunGroup.position.z += (-0.48 - fpGunGroup.position.z) * 14 * dt;
+    // 腰射位 ↔ 开镜位 之间按开镜动画进度插值（开镜位：瞄具正对视线中心）
+    const adsE = adsEase;
+    const restZ = -0.48 + (-0.3 + 0.48) * adsE;
+    fpGunGroup.position.z += (restZ - fpGunGroup.position.z) * 14 * dt;
 
-    // 走路晃枪 + 转视角时枪身惯性滞后（只影响枪模显示，不影响准星与弹道）
+    // 跑动晃枪 + 转视角时枪身惯性滞后（只影响枪模显示，不影响准星与弹道）；开镜时晃动大幅减弱
     const movingNow = mx !== 0 || mz !== 0;
-    gunBobPhase += dt * (movingNow ? (sprinting ? 12.5 : (player.stance === "stand" ? 9.5 : 6.5)) : 1.6);
-    const bobAmp = movingNow ? (sprinting ? 0.018 : 0.011) : 0.0025;
+    gunBobPhase += dt * (movingNow ? (player.stance === "stand" ? 12.5 : 8.5) : 1.6);
+    const bobAmp = (movingNow ? (player.stance === "stand" ? 0.018 : 0.012) : 0.0025) * (1 - adsE * 0.85);
     const dYaw = angleDiff(yaw, lastSwayYaw), dPitch = pitch - lastSwayPitch;
     lastSwayYaw = yaw; lastSwayPitch = pitch;
     const swayK = Math.min(1, dt * 10);
     gunSwayX += (Math.max(-0.035, Math.min(0.035, dYaw * 0.5)) - gunSwayX) * swayK;
     gunSwayY += (Math.max(-0.03, Math.min(0.03, dPitch * 0.4)) - gunSwayY) * swayK;
-    fpGunGroup.position.x = 0.24 + Math.sin(gunBobPhase) * bobAmp + gunSwayX;
-    fpGunGroup.position.y = -0.22 + Math.abs(Math.cos(gunBobPhase)) * bobAmp * 0.8 - gunSwayY;
+    const hipX = 0.24 + Math.sin(gunBobPhase) * bobAmp + gunSwayX;
+    const hipY = -0.22 + Math.abs(Math.cos(gunBobPhase)) * bobAmp * 0.8 - gunSwayY;
+    const aimX = Math.sin(gunBobPhase) * bobAmp + gunSwayX * 0.3;
+    const aimY = -adsAnim.sightY + Math.abs(Math.cos(gunBobPhase)) * bobAmp * 0.8 - gunSwayY * 0.3;
+    fpGunGroup.position.x = hipX + (aimX - hipX) * adsE;
+    fpGunGroup.position.y = hipY + (aimY - hipY) * adsE;
+    // 抬枪过程中枪身轻微侧倾，到位后回正
+    fpGunGroup.rotation.z = Math.sin(adsAnim.t * Math.PI) * 0.09;
     if (muzzleFlashMesh && muzzleFlashMesh.material.opacity > 0) {
       muzzleFlashMesh.material.rotation = Math.random() * Math.PI;
     }
@@ -3652,6 +4006,18 @@ function animate() {
       const distToPlayer = bot.group.position.distanceTo(playerRig.position);
       const canSeePlayer = player.phase === "ground" && distToPlayer < 135 && hasLineOfSight(bot.group.position, playerRig.position);
 
+      // 打药被打断：进入交火视野或身处毒圈时放弃
+      if (bot.healUntil > 0 && ((isAlerted && canSeePlayer) || isInBlueZone)) bot.healUntil = 0;
+      // 每隔约 1 秒扫描一次附近值得搜的物资（找不到/走不到的目标 15 秒后放弃，避免死磕）
+      if (now > bot.nextLootScan) {
+        bot.nextLootScan = now + 800 + Math.random() * 500;
+        if (bot.weaponKey && !isAlerted) scanBotLootTarget(bot, now);
+      }
+      if (bot.lootTarget && now - bot.lootTargetSince > 15000) {
+        bot.lootTarget = null;
+        bot.nextLootScan = now + 8000;
+      }
+
       let moveGoal = bot.targetPos;
       let moveSpd = isInBlueZone ? 6.3 : 5.0;
       let moveMode = "patrol";
@@ -3668,18 +4034,27 @@ function animate() {
       } else if (isAlerted && canSeePlayer && bot.weaponKey) {
         // 2. 与玩家交火时：执行左右蝴蝶步横移走位 (Strafing)，绝不站桩！
         moveMode = "combat";
+        // 按距离切换最合适的枪（近距离切喷子/冲锋枪，远距离切狙击/连狙）
+        if (now > bot.nextWeaponEval) {
+          bot.nextWeaponEval = now + 900;
+          botConsiderWeaponSwitch(bot, distToPlayer, now);
+        }
+        const wType = WEAPONS_DATA[bot.weaponKey].type;
+        const sniper = wType === "SR" || wType === "DMR";
+        const closeGun = wType === "SG" || wType === "SMG";
         if (now > bot.nextStrafeFlip) {
           // 不规则节奏：多数时候反向横移，偶尔急停定点射击，偶尔继续同向长距离拉扯；近距离时左右晃得更快
+          // 狙击/连狙远距离时更多原地架枪，喷子/冲锋枪几乎不停步
           const r = Math.random();
-          if (r < 0.2) bot.strafePauseUntil = now + 200 + Math.random() * 350;
+          const pauseP = sniper && distToPlayer > 40 ? 0.55 : (closeGun ? 0.1 : 0.2);
+          if (r < pauseP) bot.strafePauseUntil = now + (sniper ? 600 + Math.random() * 900 : 200 + Math.random() * 350);
           else if (r < 0.85) bot.strafeDir = -bot.strafeDir;
           bot.nextStrafeFlip = now + (distToPlayer < 20 ? 320 + Math.random() * 520 : 600 + Math.random() * 1400);
         }
         // 按手中武器保持交战距离：喷子/冲锋枪贴脸压近，狙击/连狙拉开距离，步枪中距离
-        const wType = WEAPONS_DATA[bot.weaponKey].type;
-        const prefRange = (wType === "SG" ? 10 : wType === "SMG" ? 18 : (wType === "SR" || wType === "DMR") ? 48 : 32) + bot.rangeBias;
+        const prefRange = botProfile(bot).prefRange + bot.rangeBias;
         let strafeOffset = distToPlayer > 22 ? 1.15 : 1.55;
-        if (distToPlayer > prefRange + 12) strafeOffset = 0.8;
+        if (distToPlayer > prefRange + 12) strafeOffset = closeGun ? 0.45 : 0.8;
         else if (distToPlayer < prefRange - 8) strafeOffset = 2.05;
         const angleToPlayer = Math.atan2(playerRig.position.x - bot.group.position.x, playerRig.position.z - bot.group.position.z);
         const strafeAngle = angleToPlayer + bot.strafeDir * strafeOffset;
@@ -3688,10 +4063,21 @@ function animate() {
           0,
           bot.group.position.z + Math.cos(strafeAngle) * 12
         );
-        moveSpd = now < bot.strafePauseUntil ? 0 : 5.4;
+        moveSpd = now < bot.strafePauseUntil ? 0 : (closeGun && distToPlayer > prefRange + 12 ? 5.9 : 5.4);
+      } else if (bot.healUntil > 0 || (bot.hp < 62 && bot.meds > 0 && !isInBlueZone && !(isAlerted && canSeePlayer))) {
+        // 3. 受伤且安全时原地打药（约 4 秒回 45 血，期间被发现则中断）
+        moveMode = "heal";
+        moveSpd = 0;
+        if (bot.healUntil === 0) {
+          bot.healUntil = now + 3500 + Math.random() * 1500;
+        } else if (now >= bot.healUntil) {
+          bot.hp = Math.min(100, bot.hp + 45);
+          bot.meds--;
+          bot.healUntil = 0;
+        }
       } else if (!bot.weaponKey) {
         moveMode = "loot";
-        // 3. 没枪时寻找最近地面枪械（配合房门导航进屋拾取）
+        // 4. 没枪时寻找最近地面枪械（配合房门导航进屋拾取）
         let nearestWepLoot = null;
         let minDist = 9999;
         for (let i = 0; i < worldLootItems.length; i++) {
@@ -3704,20 +4090,25 @@ function animate() {
         if (nearestWepLoot) {
           moveGoal = new THREE.Vector3(nearestWepLoot.x, 0, nearestWepLoot.z);
           if (minDist < 3.2) {
-            bot.weaponKey = nearestWepLoot.item.id;
-            bot.botGunMesh.visible = true;
-            bot.armorReduction = 0.25;
-            scene.remove(nearestWepLoot.mesh);
-            const idx = worldLootItems.indexOf(nearestWepLoot);
-            if (idx !== -1) worldLootItems.splice(idx, 1);
+            botGiveWeapon(bot, nearestWepLoot.item.id, nearestWepLoot.item.attachments);
+            removeLootEntry(nearestWepLoot);
             bot.pauseUntil = now + 350 + Math.random() * 650; // 捡枪后短暂停顿（像真人在装备）
           }
         } else if (elapsed > bot.dropTime + 22) {
-          bot.weaponKey = "ump45";
-          bot.botGunMesh.visible = true;
+          botGiveWeapon(bot, "ump45", {});
+        }
+      } else if (bot.lootTarget && !bot.lootTarget.gone && !isAlerted) {
+        // 5. 已有枪：继续搜第二把枪 / 头盔 / 防弹衣 / 背包 / 药 / 配件
+        moveMode = "loot";
+        const lt = bot.lootTarget;
+        moveGoal = new THREE.Vector3(lt.x, 0, lt.z);
+        if (Math.hypot(lt.x - bot.group.position.x, lt.z - bot.group.position.z) < 1.8) {
+          botPickupLoot(bot, lt, now);
+          bot.lootTarget = null;
+          bot.nextLootScan = now + 250;
         }
       } else if (bot.group.position.distanceTo(bot.targetPos) < 4.5) {
-        // 4. 巡逻漫游：优先挑选安全区内的其它房区门口巡逻
+        // 6. 巡逻漫游：优先挑选安全区内的其它房区门口巡逻
         const safeHouses = buildingFootprints.filter(b => Math.hypot(b.cx - zoneState.cx, b.cz - zoneState.cz) < zoneState.targetR);
         if (safeHouses.length > 0 && Math.random() < 0.65) {
           const h = safeHouses[Math.floor(Math.random() * safeHouses.length)];
@@ -3765,37 +4156,43 @@ function animate() {
         turnRate = 6.5;
       }
       turnBotTowardYaw(bot, faceYaw, turnRate * dt);
-      animateBotBody(bot, dt, !!bot.weaponKey && isAlerted, distToPlayer, now);
+      const busy = now < bot.reloadUntil || now < bot.swapUntil || bot.healUntil > 0;
+      animateBotBody(bot, dt, !!bot.weaponKey && isAlerted && !busy, distToPlayer, now);
 
-      // AI 射击与反击逻辑
-      const fireCooldown = isAlerted ? (650 + Math.random() * 550) : (1350 + Math.random() * 950);
-      if (bot.weaponKey && now - bot.lastFireTime > fireCooldown) {
-        const engageRange = isAlerted ? 135 : 78;
-        const engageChance = isAlerted ? 0.88 : 0.42;
+      // AI 射击与反击逻辑：按手中武器的射速 / 射程 / 伤害开火；换弹、切枪、打药期间不能开火
+      if (bot.weaponKey && !busy) {
+        const prof = botProfile(bot);
+        const wType = WEAPONS_DATA[bot.weaponKey].type;
+        const cdBase = prof.cdMin + Math.random() * (prof.cdMax - prof.cdMin);
+        const fireCooldown = isAlerted ? cdBase : cdBase * 1.8;
+        if (now - bot.lastFireTime > fireCooldown) {
+          const engageRange = isAlerted ? prof.maxRange : Math.min(prof.maxRange, (wType === "SR" || wType === "DMR") ? 110 : 78);
+          const engageChance = isAlerted ? 0.88 : 0.42;
 
-        if (player.phase === "ground" && distToPlayer < engageRange && Math.random() < engageChance && canSeePlayer) {
-          bot.lastFireTime = now;
-          bot.alertUntil = Math.max(bot.alertUntil, now + 6000);
-          setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 700);
-          sfx.playShot(false, 1.0, distToPlayer);
-          registerRadarSound("shot", bot.group.position.x, bot.group.position.z, false);
-          if (Math.random() < (isAlerted ? 0.34 : 0.25)) {
-            damagePlayer(9 + Math.floor(Math.random() * 10), bot.name, WEAPONS_DATA[bot.weaponKey].name);
-          }
-        } else {
-          const otherBot = aiPlayers.find(o =>
-            o !== bot && o.alive && o.phase === "ground" &&
-            o.group.position.distanceTo(bot.group.position) < 68 &&
-            hasLineOfSight(bot.group.position, o.group.position)
-          );
-          if (otherBot && Math.random() < 0.32) {
+          if (player.phase === "ground" && distToPlayer < engageRange && Math.random() < engageChance && canSeePlayer) {
             bot.lastFireTime = now;
-            setBotFaceHint(bot, otherBot.group.position.x, otherBot.group.position.z, 900);
-            sfx.playShot(false, 1.0, distToPlayer);
-            registerRadarSound("shot", bot.group.position.x, bot.group.position.z, false);
-            otherBot.hp -= 36;
-            if (otherBot.hp <= 0) {
-              killAIBot(otherBot, bot.name, WEAPONS_DATA[bot.weaponKey].name, Math.random() < 0.25, false);
+            bot.alertUntil = Math.max(bot.alertUntil, now + 6000);
+            setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 700);
+            botFireAtPlayer(bot, distToPlayer, now);
+          } else {
+            const otherBot = aiPlayers.find(o =>
+              o !== bot && o.alive && o.phase === "ground" &&
+              o.group.position.distanceTo(bot.group.position) < Math.min(68, prof.maxRange) &&
+              hasLineOfSight(bot.group.position, o.group.position)
+            );
+            if (otherBot && Math.random() < 0.32) {
+              bot.lastFireTime = now;
+              setBotFaceHint(bot, otherBot.group.position.x, otherBot.group.position.z, 900);
+              sfx.playShot(bot.weaponAtts[bot.activeSlot].muzzle === "supp", 1.0, distToPlayer);
+              registerRadarSound("shot", bot.group.position.x, bot.group.position.z, false);
+              // AI 互殴：伤害随武器类型变化，并扣除对方防弹衣减伤
+              const od = otherBot.group.position.distanceTo(bot.group.position);
+              const typeMul = wType === "SG" ? (od < 15 ? 1.6 : 0.4) : (AI_VS_AI_DMG[wType] || 1);
+              otherBot.hp -= Math.round(36 * typeMul * (1 - botArmorReduction(otherBot, false)) / 0.9);
+              botAfterShots(bot, prof.volley, od, now);
+              if (otherBot.hp <= 0) {
+                killAIBot(otherBot, bot.name, WEAPONS_DATA[bot.weaponKey].name, Math.random() < 0.25, false);
+              }
             }
           }
         }
@@ -3875,7 +4272,14 @@ function animate() {
     const dirStr = dirs[Math.round(deg / 45) % 8];
     document.getElementById("compass-bar").innerText = `${dirStr} ${deg}° | 艾伦格·P城战区`;
 
-    const near = getNearbyLoot();
+    let near = getNearbyLoot();
+    if (near.length > 0 && now - lastAutoPickupTime > 240) {
+      tryAutoPickup(near);
+      if (near.some(e => e.gone)) {
+        lastAutoPickupTime = now;
+        near = near.filter(e => !e.gone);
+      }
+    }
     const floatBox = document.getElementById("nearby-loot-float");
     const listDiv = document.getElementById("quick-loot-list");
     // 列表内容没变化就不重建 DOM：省掉每秒 8 次重排，也避免手指按下瞬间按钮被替换导致“点了没反应”

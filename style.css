@@ -224,6 +224,24 @@ body, html {
 #btn-reload { width: 36px; height: 36px; right: 126px; bottom: 62px; }
 #btn-crouch { width: 36px; height: 36px; right: 98px; bottom: 10px; }
 #btn-prone { width: 36px; height: 36px; right: 52px; bottom: 10px; }
+/* 投掷键：按住瞄准（可拖动转视角），松手扔出；上方小标签点一下切换种类 */
+#btn-throw {
+  width: 40px; height: 40px; right: 134px; bottom: 104px; font-size: 15px; line-height: 1.05;
+  background: rgba(60, 70, 30, 0.5); border-color: rgba(200, 230, 120, 0.8);
+}
+#btn-throw small { font-size: 8px; font-weight: 800; color: #ffe08a; }
+#btn-throw.empty { filter: grayscale(1); opacity: calc(var(--btn-opacity) * 0.55); }
+#btn-throw-cycle {
+  position: absolute; z-index: 18; right: 128px; bottom: 150px; min-width: 52px;
+  padding: 2px 6px; border-radius: 9px; text-align: center;
+  background: rgba(20, 26, 32, 0.78); border: 1px solid rgba(200, 230, 120, 0.7);
+  color: #e8f5c0; font-size: 9px; font-weight: bold; cursor: pointer;
+  opacity: var(--btn-opacity); transform: scale(var(--btn-scale)); transform-origin: bottom right;
+}
+#stun-flash {
+  position: absolute; inset: 0; pointer-events: none; z-index: 60;
+  background: radial-gradient(circle, #ffffff 0%, #f4f6ff 60%, #e2e6f0 100%); opacity: 0;
+}
 
 #backpack-modal {
   display: none; position: absolute; inset: 0; z-index: 50;
@@ -261,6 +279,17 @@ body, html {
   padding: 3px 5px; border-radius: 3px; font-size: 9px; display: flex; justify-content: space-between; align-items: center; cursor: pointer;
 }
 .att-slot-box.filled { border-style: solid; border-color: #00ff88; color: #00ff88; }
+
+#bigmap-modal {
+  display: none; position: absolute; inset: 0; z-index: 45;
+  background: rgba(6, 8, 10, 0.86); flex-direction: column;
+  align-items: center; justify-content: center;
+}
+#bigmap-canvas { display: block; border: 1.5px solid rgba(255, 165, 0, 0.7); border-radius: 4px; }
+#bigmap-hint {
+  position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
+  font-size: 10px; color: #ffd27d; background: rgba(0, 0, 0, 0.6); padding: 2px 8px; border-radius: 3px; white-space: nowrap;
+}
 
 #gameover-modal {
   display: none; position: absolute; inset: 0; z-index: 80;

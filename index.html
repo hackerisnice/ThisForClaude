@@ -13,22 +13,23 @@
 
 <div id="portrait-warn">
   <h2>📱 请将手机横屏游玩</h2>
-  <p style="margin-top:8px;color:#ccc;font-size:13px;">已实装：AI真实跳伞开伞、7向触须避障+房门寻路、拟人化走位、实时阴影、自适应画质</p>
+  <p style="margin-top:8px;color:#ccc;font-size:13px;">已实装：3.2km大地图（学校/遗迹/多层楼）、投掷物、脚步声、AI分散跳伞与上下楼寻路、实时阴影、自适应画质</p>
 </div>
 
 <div id="canvas-container"></div>
 <div id="damage-flash"></div>
+<div id="stun-flash"></div>
 <div id="bluezone-overlay"></div>
 <div id="toast-msg">提示消息</div>
 
-<div id="minimap-box" title="点击切换雷达缩放比例">
-  <canvas id="minimap-canvas" width="96" height="96"></canvas>
+<div id="minimap-box" title="点击打开大地图 (M)">
+  <canvas id="minimap-canvas" width="192" height="192"></canvas>
   <div id="zone-timer">⏳ 阶段1等待: 01:15</div>
 </div>
 
 <div id="top-hud">
   <div style="width:106px;"></div>
-  <div id="compass-bar">N 0° | 艾伦格·P城战区</div>
+  <div id="compass-bar">N 0° | 野外</div>
   <div id="match-Counters">
     <div class="counter-box">存活<span class="counter-num" id="alive-count">50</span></div>
     <div class="counter-box">淘汰<span class="counter-num" id="kill-count">0</span></div>
@@ -153,6 +154,8 @@
 <div class="touch-btn" id="btn-reload">换弹</div>
 <div class="touch-btn" id="btn-crouch">蹲</div>
 <div class="touch-btn" id="btn-prone">趴</div>
+<div class="touch-btn empty" id="btn-throw">💣<br><small>无</small></div>
+<div id="btn-throw-cycle">投掷物</div>
 
 <div id="backpack-modal">
   <div class="bag-header">
@@ -176,6 +179,11 @@
       <div id="bag-weapons-panel"></div>
     </div>
   </div>
+</div>
+
+<div id="bigmap-modal">
+  <canvas id="bigmap-canvas"></canvas>
+  <div id="bigmap-hint">点击任意处关闭 · 🏫学校 🏛️遗迹 · 白圈=安全区 蓝圈=电网</div>
 </div>
 
 <div id="gameover-modal">

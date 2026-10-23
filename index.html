@@ -189,10 +189,57 @@
 <div id="gameover-modal">
   <h1 id="go-title">大吉大利，今晚吃鸡！</h1>
   <p id="go-stats">排名: #1 / 50 | 淘汰数: 8 | 造成伤害: 960</p>
+  <div id="go-replay-row">
+    <button id="btn-replay-death" class="go-replay-btn">🎬 观看淘汰回放</button>
+    <button id="btn-replay-kill" class="go-replay-btn">🎯 回放我的最后一杀</button>
+  </div>
   <button id="btn-restart" onclick="location.reload()">再来一局</button>
 </div>
 
+<div id="replay-ui">
+  <div id="replay-top">
+    <span id="replay-badge">🎬 淘汰回放</span>
+    <span id="replay-title"></span>
+    <span id="replay-sub"></span>
+  </div>
+  <div id="replay-slowmo">慢动作 0.3x</div>
+  <div id="replay-bottom">
+    <button id="rp-restart" title="从头播放">⏮</button>
+    <button id="rp-play" title="暂停 / 播放 (空格)">⏸</button>
+    <div id="rp-bar"><div id="rp-fill"></div><div id="rp-kill-mark" title="淘汰时刻"></div></div>
+    <span id="rp-time">0.0s</span>
+    <button id="rp-speed" title="播放速度">1x</button>
+    <button id="rp-cam" title="切换视角 (C)">🎥 击杀者视角</button>
+    <button id="rp-exit" title="退出回放 (Esc)">✕ 退出</button>
+  </div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="game.js"></script>
+<!-- 游戏脚本：共享同一个全局作用域，必须按以下顺序加载 -->
+<script src="js/settings.js"></script>
+<script src="js/data.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/render.js"></script>
+<script src="js/world.js"></script>
+<script src="js/buildings.js"></script>
+<script src="js/items.js"></script>
+<script src="js/mapgen.js"></script>
+<script src="js/nature.js"></script>
+<script src="js/plane.js"></script>
+<script src="js/viewmodel.js"></script>
+<script src="js/actors.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/ai_nav.js"></script>
+<script src="js/los.js"></script>
+<script src="js/zone.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/throwables.js"></script>
+<script src="js/loot.js"></script>
+<script src="js/scope.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/map.js"></script>
+<script src="js/input.js"></script>
+<script src="js/replay.js"></script>
+<script src="js/main.js"></script>
 </body>
 </html>

@@ -302,3 +302,44 @@ body, html {
   background: #ffa500; color: #111; border: none; padding: 9px 24px;
   font-size: 15px; font-weight: 900; border-radius: 22px; cursor: pointer;
 }
+
+/* 结算界面的回放按钮 */
+#go-replay-row { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; justify-content: center; }
+.go-replay-btn {
+  display: none; background: #1d232c; color: #ffd27d; border: 1.5px solid #ffa500;
+  padding: 8px 16px; border-radius: 20px; font-size: 14px; font-weight: 900; cursor: pointer;
+}
+.go-replay-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* 淘汰回放：播放时隐藏全部游戏 HUD，只留画面与回放控制条 */
+body.replay-mode > *:not(#canvas-container):not(#replay-ui):not(#portrait-warn):not(script) { display: none !important; }
+#replay-ui {
+  display: none; position: absolute; inset: 0; z-index: 70; pointer-events: none;
+  flex-direction: column; justify-content: space-between; align-items: stretch;
+}
+#replay-top {
+  align-self: center; margin-top: 8px; max-width: calc(100vw - 24px);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
+  background: rgba(8, 10, 14, 0.72); border: 1px solid rgba(255, 165, 0, 0.7); border-radius: 6px;
+  padding: 4px 12px; font-size: 12px; text-shadow: 0 1px 2px #000;
+}
+#replay-badge { color: #ffa500; font-weight: 900; }
+#replay-title { color: #fff; font-weight: 800; }
+#replay-sub { color: #ffd27d; font-weight: 700; }
+#replay-slowmo {
+  position: absolute; top: 46px; left: 50%; transform: translateX(-50%);
+  color: #ff5a4a; font-size: 13px; font-weight: 900; letter-spacing: 2px;
+  text-shadow: 0 1px 4px #000; opacity: 0; transition: opacity 0.2s;
+}
+#replay-bottom {
+  pointer-events: auto; margin: 0 12px 10px; display: flex; align-items: center; gap: 6px;
+  background: rgba(10, 12, 16, 0.84); border: 1px solid rgba(255, 165, 0, 0.5); border-radius: 8px; padding: 5px 8px;
+}
+#replay-bottom button {
+  background: #1d232c; color: #ffd27d; border: 1px solid rgba(255, 165, 0, 0.6); border-radius: 5px;
+  padding: 4px 8px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap;
+}
+#rp-bar { flex: 1; min-width: 80px; height: 10px; background: #333; border-radius: 5px; position: relative; cursor: pointer; touch-action: none; }
+#rp-fill { height: 100%; width: 0; background: linear-gradient(90deg, #ff9900, #ffd000); border-radius: 5px; }
+#rp-kill-mark { position: absolute; top: -3px; width: 3px; height: 16px; margin-left: -1px; background: #ff2a1a; border-radius: 1px; }
+#rp-time { font-size: 11px; color: #ccc; min-width: 40px; text-align: right; }

@@ -29,13 +29,20 @@
 
 <div id="top-hud">
   <div style="width:106px;"></div>
-  <div id="compass-bar">N 0° | 野外</div>
+  <div id="compass-wrap">
+    <div id="compass-bar">N 0° | 野外</div>
+    <!-- 标点：方向箭头 + 直线距离，点一下取消 -->
+    <div id="marker-hud"><span id="marker-hud-arrow"></span><b id="marker-hud-dist">0m</b><span id="marker-hud-x">✕</span></div>
+  </div>
   <div id="match-Counters">
     <div class="counter-box">存活<span class="counter-num" id="alive-count">50</span></div>
     <div class="counter-box">淘汰<span class="counter-num" id="kill-count">0</span></div>
     <button id="btn-ui-cfg">⚙️设置</button>
   </div>
 </div>
+
+<div class="touch-btn" id="btn-mark" title="标点测距 (V / 鼠标中键)，长按取消">📍标点</div>
+<div id="marker-world"><div id="marker-world-pin"></div><div id="marker-world-dist">0m</div></div>
 
 <div id="ui-cfg-panel">
   <div style="color:#ffa500;font-weight:bold;margin-bottom:4px;display:flex;justify-content:space-between;">
@@ -188,7 +195,8 @@
 
 <div id="bigmap-modal">
   <canvas id="bigmap-canvas"></canvas>
-  <div id="bigmap-hint">点击任意处关闭 · 🏫学校 🏛️遗迹 · 白圈=安全区 蓝圈=电网</div>
+  <div id="bigmap-close">✕</div>
+  <div id="bigmap-hint">点地图标点（点标记取消）· 点空白处或 ✕ 关闭 · 🏫学校 🏛️遗迹 · 白圈=安全区 蓝圈=电网</div>
 </div>
 
 <div id="gameover-modal">
@@ -242,10 +250,12 @@
 <script src="js/zone.js"></script>
 <script src="js/combat.js"></script>
 <script src="js/throwables.js"></script>
+<script src="js/ballistics.js"></script>
 <script src="js/loot.js"></script>
 <script src="js/scope.js"></script>
 <script src="js/hud.js"></script>
 <script src="js/map.js"></script>
+<script src="js/marker.js"></script>
 <script src="js/input.js"></script>
 <script src="js/replay.js"></script>
 <script src="js/main.js"></script>

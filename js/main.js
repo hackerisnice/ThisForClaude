@@ -25,6 +25,7 @@ function animate() {
   // 淘汰回放播放中：整个战场暂停，只播放录像
   if (replayState.active) {
     updateReplayPlayback(dt, now);
+    updateMapMarker();
     renderFrame(elapsed);
     return;
   }
@@ -366,6 +367,9 @@ function animate() {
     }
   }
 
+  // 子弹飞行（下坠 / 飞行时间 / 命中结算）与玩家移动速度（AI 打提前量用）
+  trackPlayerVelocity(dt);
+  updateBullets(dt);
   // 投掷物飞行/爆炸、烟雾、火海、爆炸特效
   updateThrowables(dt, now);
   updateFx(dt, now);
@@ -388,6 +392,7 @@ function animate() {
     camera.position.set(0, 0, 0);
     cameraShake = 0;
   }
+  updateMapMarker();
   renderFrame(elapsed);
 }
 

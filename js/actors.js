@@ -27,6 +27,8 @@ const player = {
   burstRemaining: 0,
   consecutiveShots: 0,
   lastShotTime: 0,
+  lastFiredAt: -1e9,      // 最近一次开枪时刻（远处 AI 更容易发现正在开枪的人）
+  lastFiredSupp: false,
   boltLockedUntil: 0,
   casting: null,
   // 立体移动：脚底高度（站在哪层楼/楼梯/屋顶上）+ 视线高度（随站/蹲/趴平滑过渡）
@@ -233,6 +235,22 @@ function createAIBot(id) {
     aimSettle: 0,
     aimPitch: 0,
     foeUntil: 0, foeY: 0, foeDist: 30,
+    // 枪法：打移动目标给提前量的准确度、远距离抬枪补下坠的准确度（每个 AI 不一样）
+    leadSkill: 0.55 + Math.random() * 0.45,
+    dropSkill: 0.85 + Math.random() * 0.2,
+    // 性格：好斗（主动搜人）、爱蹲点（阴人）、爱架狙（找高楼窗口远距离狙）
+    aggr: Math.random(),
+    camper: Math.random(),
+    sniperPref: 0.3 + Math.random() * 0.7,
+    // 战术状态：hunt 搜猎 / ambush 阴人 / overwatch 架点狙击
+    tactic: null, tacticSince: 0, tacticUntil: 0, nextTacticEval: 0, tacticInfoT: -1e9,
+    huntIgnoreT: -1, huntSearchUntil: 0, huntSearchPt: null, huntSearchNext: 0, flankSide: 1, nextIntelT: 0,
+    huntFlankPt: null, huntFlankNext: 0, huntNear: false,
+    ambushYaw: 0, owSpot: null, owAt: false, nextOverwatchTry: 0, nextCampTry: 0,
+    // 远距离发现：发现进度（0~1，到 1 才算看见）、远距离视线检测缓存
+    spot: 0, farLOS: false, nextFarLOS: 0,
+    // 蹲下（阴人 / 打药 / 远距离架枪时）；standUntil 内强制站起来探头
+    crouchWant: false, crouchBlend: 0, standUntil: 0,
     landTarget,
     weaponKey: null,
     targetPos: new THREE.Vector3(0, 0, 0),

@@ -11,6 +11,7 @@ function killAIBot(bot, killerName, weaponName, isHeadshot, byPlayer = false) {
   if (!bot.alive) return;
   bot.alive = false;
   bot.group.visible = false;
+  if (bot.tactic) botEndTactic(bot); // 让出狙击楼
 
   const crate = new THREE.Mesh(deathCrateGeo, deathCrateMat);
   crate.position.set(bot.group.position.x, bot.group.position.y + 0.23, bot.group.position.z);
@@ -68,12 +69,18 @@ function killAIBot(bot, killerName, weaponName, isHeadshot, byPlayer = false) {
   }
 }
 
-function damagePlayer(dmg, attackerName, wepName) {
+function damagePlayer(dmg, attackerName, wepName, isHead = false) {
   if (player.phase === "dead") return;
   let actual = dmg;
-  // 毒圈、坠落、燃烧不受防弹衣减免
+  // 毒圈、坠落、燃烧不受防弹衣减免；被打中头部时由头盔减伤
   const ignoreArmor = attackerName === "电网蓝圈 (Blue Zone)" || wepName === "跌落" || wepName === "燃烧瓶";
-  if (!ignoreArmor && player.vest && player.vest.dur > 0) {
+  if (!ignoreArmor && isHead) {
+    if (player.helm && player.helm.dur > 0) {
+      const red = player.helm.lv === 3 ? 0.55 : (player.helm.lv === 2 ? 0.40 : 0.30);
+      actual = Math.round(dmg * (1 - red));
+      player.helm.dur = Math.max(0, player.helm.dur - dmg * 0.6);
+    }
+  } else if (!ignoreArmor && player.vest && player.vest.dur > 0) {
     const red = player.vest.lv === 3 ? 0.55 : (player.vest.lv === 2 ? 0.40 : 0.30);
     actual = Math.round(dmg * (1 - red));
     player.vest.dur = Math.max(0, player.vest.dur - dmg * 0.6);

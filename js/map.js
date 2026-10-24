@@ -137,7 +137,7 @@ function drawMapOverlays(ctx, toX, toZ, scale, W, H, isBig) {
   const px = toX(playerRig.position.x), pz = toZ(playerRig.position.z);
   for (let i = radarSoundMarkers.length - 1; i >= 0; i--) {
     const m = radarSoundMarkers[i];
-    const age = now - m.born;
+    const age = Math.max(0, now - m.born);
     if (age > m.maxAge) {
       if (!isBig) radarSoundMarkers.splice(i, 1);
       continue;
@@ -165,6 +165,8 @@ function drawMapOverlays(ctx, toX, toZ, scale, W, H, isBig) {
       ctx.beginPath(); ctx.arc(sx, sz, isBig ? 2.5 : 4, 0, Math.PI * 2); ctx.fill();
     }
   }
+
+  drawMarkerOnMap(ctx, toX, toZ, W, H, isBig);
 
   // 玩家：带朝向的箭头
   const s = isBig ? 1.25 : 1.6;
@@ -244,8 +246,17 @@ function toggleBigMap(force) {
     drawBigMap();
   }
 }
-bigMapModal.addEventListener("click", () => toggleBigMap(false));
-bigMapModal.addEventListener("touchstart", e => { e.preventDefault(); toggleBigMap(false); }, { passive: false });
+// 点地图本身 = 标点 / 取消标点（见 marker.js）；点地图外的空白处或 ✕ = 关闭
+bigMapModal.addEventListener("click", e => {
+  if (e.target === bigMapCanvas) bigMapTapAt(e.clientX, e.clientY);
+  else toggleBigMap(false);
+});
+bigMapModal.addEventListener("touchstart", e => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  if (e.target === bigMapCanvas) bigMapTapAt(t.clientX, t.clientY);
+  else toggleBigMap(false);
+}, { passive: false });
 
 function drawBigMap() {
   const ctx = bigMapCtx;

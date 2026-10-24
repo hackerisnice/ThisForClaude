@@ -35,7 +35,9 @@ function killAIBot(bot, killerName, weaponName, isHeadshot, byPlayer = false) {
   if (bot.vestLv) spawnRandomGroundLoot(bx - 0.45, bz + 0.15, { kind: "gear", sub: "vest", name: `${bot.vestLv}级防弹衣`, lv: bot.vestLv, dur: bot.vestLv * 100, maxDur: bot.vestLv * 100 }, by);
   if (bot.bagLv) spawnRandomGroundLoot(bx - 0.9, bz - 0.1, { kind: "gear", sub: "bag", name: `${bot.bagLv}级背包`, lv: bot.bagLv, capBonus: bot.bagLv * 70 }, by);
   if (bot.meds > 0) spawnRandomGroundLoot(bx, bz + 0.6, { kind: "med", id: "firstaid", name: MEDS_DATA.firstaid.name, count: Math.min(3, bot.meds) }, by);
-  if (bot.frags > 0) spawnRandomGroundLoot(bx + 0.5, bz + 0.6, { kind: "throwable", id: "frag", name: THROWABLES_DATA.frag.name, count: bot.frags }, by);
+  THROW_ORDER.forEach((id, k) => {
+    if (bot.nades[id] > 0) spawnRandomGroundLoot(bx + 0.5 - k * 0.32, bz + 0.6, { kind: "throwable", id, name: THROWABLES_DATA[id].name, count: bot.nades[id] }, by);
+  });
   spawnRandomGroundLoot(bx - 0.35, bz + 0.25, null, by);
 
   const aliveNow = aiPlayers.filter(a => a.alive).length + (player.phase !== "dead" ? 1 : 0);

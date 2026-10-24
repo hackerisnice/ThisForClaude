@@ -24,6 +24,8 @@ const AI_RANGE_FIT = { SG: [1.0, 0.25, 0.0], SMG: [0.95, 0.6, 0.15], AR: [0.7, 1
 const AI_VS_AI_DMG = { AR: 1.0, SMG: 0.9, LMG: 1.0, SG: 1.0, DMR: 1.2, SR: 1.8 };
 const BOT_GUN_LENGTH = { AR: 1.0, SMG: 0.72, LMG: 1.15, SG: 1.05, DMR: 1.25, SR: 1.4 };
 const BOT_MED_CAP = [3, 5, 7, 9]; // 背包等级越高能带的药越多
+const BOT_NADE_CAP = { frag: 3, smoke: 2, stun: 2, molotov: 2 };   // 每种投掷物最多带几个
+const BOT_NADE_WANT = { frag: 0.9, smoke: 0.7, stun: 0.65, molotov: 0.75 };
 
 function botProfile(bot) {
   return AI_WEAPON_PROFILE[WEAPONS_DATA[bot.weaponKey].type] || AI_WEAPON_PROFILE.AR;
@@ -98,7 +100,10 @@ function botLootScore(bot, item) {
   }
   if (item.kind === "med") return bot.meds < BOT_MED_CAP[bot.bagLv] ? 1.0 : 0;
   if (item.kind === "attachment") return botAttachmentTargetSlot(bot, item) >= 0 ? 0.8 : 0;
-  if (item.kind === "throwable") return item.id === "frag" && bot.frags < 2 ? 0.9 : 0;
+  if (item.kind === "throwable") {
+    const cap = BOT_NADE_CAP[item.id] || 0;
+    return (bot.nades[item.id] || 0) < cap ? BOT_NADE_WANT[item.id] : 0;
+  }
   return 0;
 }
 
@@ -110,7 +115,7 @@ function scanBotLootTarget(bot, now) {
     const e = worldLootItems[i];
     const dx = e.x - bx, dz = e.z - bz;
     const d2 = dx * dx + dz * dz;
-    if (d2 > 1444) continue;
+    if (d2 > 1444 || (bot.badLoot && bot.badLoot.has(e))) continue;
     const s = botLootScore(bot, e.item);
     if (s <= 0) continue;
     const score = s / (1 + Math.sqrt(d2) / 10);
@@ -158,10 +163,55 @@ function botPickupLoot(bot, entry, now) {
     bot.weaponAtts[botAttachmentTargetSlot(bot, it)][it.slot] = it.id;
     botRefreshGunLook(bot);
   } else if (it.kind === "throwable") {
-    bot.frags += it.count || 1;
+    bot.nades[it.id] = (bot.nades[it.id] || 0) + (it.count || 1);
   }
   removeLootEntry(entry);
   bot.pauseUntil = now + 300 + Math.random() * 500; // 捡东西的短暂停顿
+}
+
+// AI 用投掷物（返回 true 表示这一下用来扔东西了）：
+// · 残血还被看着：往自己和玩家中间丢烟，撤退打药
+// · 玩家躲起来看不见：往最后看到 / 听到的位置扔——在楼里多半先闪再冲，或者扔燃烧瓶逼出来，否则丢手雷
+// · 和别的 AI 对枪时偶尔也丢雷
+function botConsiderThrow(bot, now, distToPlayer, canSeePlayer, isAlerted) {
+  if (now < bot.nextGrenadeTime) return false;
+  const N = bot.nades, pos = bot.group.position;
+  if (!(N.frag || N.smoke || N.stun || N.molotov)) return false;
+  if (player.phase === "ground" && canSeePlayer && isAlerted && bot.hp < 45 && N.smoke > 0 && distToPlayer > 12 && distToPlayer < 120) {
+    const dx = playerRig.position.x - pos.x, dz = playerRig.position.z - pos.z, dl = Math.hypot(dx, dz) || 1;
+    if (botThrowNade(bot, "smoke", pos.x + dx / dl * 4.5, pos.y, pos.z + dz / dl * 4.5)) {
+      bot.nextGrenadeTime = now + 9000 + Math.random() * 6000;
+      bot.fleeX = playerRig.position.x; bot.fleeZ = playerRig.position.z; bot.fleeUntil = now + 2600;
+      return true;
+    }
+  }
+  const L = bot.lkp;
+  if (player.phase === "ground" && isAlerted && !canSeePlayer && L && now - L.t < 9000) {
+    const d = Math.hypot(L.x - pos.x, L.z - pos.z), dy = Math.abs(L.y - pos.y);
+    const indoors = !!getBuildingContainingPoint(L.x, L.z, -0.3);
+    const opts = [];
+    if (N.stun > 0 && indoors && d > 7 && d < 24 && dy < 3) opts.push(["stun", 1.2]);
+    if (N.molotov > 0 && d > 8 && d < 30 && dy < 3) opts.push(["molotov", indoors || player.stance === "prone" ? 1.1 : 0.45]);
+    if (N.frag > 0 && d > 9 && d < 38 && dy < 4) opts.push(["frag", 1.0]);
+    if (opts.length) {
+      let r = Math.random() * opts.reduce((s, o) => s + o[1], 0), id = opts[0][0];
+      for (const o of opts) { r -= o[1]; if (r <= 0) { id = o[0]; break; } }
+      if (botThrowNade(bot, id, L.x, L.y + 0.1, L.z)) {
+        bot.nextGrenadeTime = now + 10000 + Math.random() * 7000;
+        if (id === "stun") bot.pushUntil = now + 5500; // 闪完马上冲进去
+        return true;
+      }
+      bot.nextGrenadeTime = now + 2500; // 扔不过去（隔着墙），过一会儿换个位置再试
+    }
+  }
+  if (now < bot.foeUntil && bot.foe && bot.foe.alive && N.frag > 0 && bot.foeDist > 12 && bot.foeDist < 35 && Math.random() < 0.18) {
+    const f = bot.foe.group.position;
+    if (botThrowNade(bot, "frag", f.x + (Math.random() - 0.5) * 3, f.y + 0.1, f.z + (Math.random() - 0.5) * 3)) {
+      bot.nextGrenadeTime = now + 12000 + Math.random() * 8000;
+      return true;
+    }
+  }
+  return false;
 }
 
 // 抢空投：每 1.5~2.5 秒看一次附近有没有空投（还在降落的也算，提前往烟那边跑）。
@@ -349,6 +399,10 @@ function updateAIBot(bot, dt, now, elapsed) {
     const isAlerted = now < bot.alertUntil;
     const distToPlayer = bot.group.position.distanceTo(playerRig.position);
     const canSeePlayer = player.phase === "ground" && distToPlayer < 135 && hasLineOfSight(bot.group.position, playerRig.position, 1.5, -0.2);
+    if (canSeePlayer) {
+      if (!bot.lkp) bot.lkp = { x: 0, y: 0, z: 0, t: 0 };
+      bot.lkp.x = playerRig.position.x; bot.lkp.y = player.feetY; bot.lkp.z = playerRig.position.z; bot.lkp.t = now;
+    }
     const stunned = now < bot.stunnedUntil;
     const fleeing = now < bot.fleeUntil;
 
@@ -383,12 +437,17 @@ function updateAIBot(bot, dt, now, elapsed) {
     // 1. 跑毒
     } else if (isInBlueZone || (isOutsideSafe && !isAlerted)) {
       moveMode = "zone";
-      const angleToCenter = Math.atan2(zoneState.cz - bot.group.position.z, zoneState.cx - bot.group.position.x);
-      moveGoal = new THREE.Vector3(
-        bot.group.position.x + Math.cos(angleToCenter) * 45,
-        0,
-        bot.group.position.z + Math.sin(angleToCenter) * 45
-      );
+      // 跑毒：朝圈中心方向 45 米处定一个固定的目标点，走到了再定下一个（目标固定才能绕开房子）
+      if (!bot.zoneGoal || Math.hypot(bot.zoneGoal.x - bot.group.position.x, bot.zoneGoal.z - bot.group.position.z) < 8 ||
+          Math.hypot(bot.zoneGoal.x - zoneState.cx, bot.zoneGoal.z - zoneState.cz) > distToSafeCenter + 5) {
+        const angleToCenter = Math.atan2(zoneState.cz - bot.group.position.z, zoneState.cx - bot.group.position.x);
+        bot.zoneGoal = new THREE.Vector3(
+          bot.group.position.x + Math.cos(angleToCenter) * Math.min(45, distToSafeCenter),
+          0,
+          bot.group.position.z + Math.sin(angleToCenter) * Math.min(45, distToSafeCenter)
+        );
+      }
+      moveGoal = bot.zoneGoal;
     } else if (isAlerted && canSeePlayer && bot.weaponKey) {
       // 2. 与玩家交火时：执行左右蝴蝶步横移走位 (Strafing)，绝不站桩！
       moveMode = "combat";
@@ -429,6 +488,11 @@ function updateAIBot(bot, dt, now, elapsed) {
         moveGoal.y = bot.group.position.y;
       }
       moveSpd = now < bot.strafePauseUntil ? 0 : (closeGun && distToPlayer > prefRange + 12 ? 5.9 : 5.4);
+    } else if (now < bot.pushUntil && bot.lkp && bot.weaponKey) {
+      // 闪光弹扔进去之后：冲到玩家最后出现的位置
+      moveMode = "push";
+      moveGoal = new THREE.Vector3(bot.lkp.x, bot.lkp.y, bot.lkp.z);
+      moveSpd = 6.3;
     } else if (bot.healUntil > 0 || (bot.hp < 62 && bot.meds > 0 && !isInBlueZone && !(isAlerted && canSeePlayer))) {
       // 3. 受伤且安全时原地打药（约 4 秒回 45 血，期间被发现则中断）
       moveMode = "heal";
@@ -448,7 +512,7 @@ function updateAIBot(bot, dt, now, elapsed) {
         let best = null, bestD = 9999;
         for (let i = 0; i < worldLootItems.length; i++) {
           const entry = worldLootItems[i];
-          if (entry.item.kind === "weapon") {
+          if (entry.item.kind === "weapon" && !(bot.badLoot && bot.badLoot.has(entry))) {
             const d = Math.hypot(entry.x - bot.group.position.x, entry.z - bot.group.position.z) + Math.abs(entry.y - bot.group.position.y) * 2;
             if (d < bestD) { bestD = d; best = entry; }
           }
@@ -523,7 +587,20 @@ function updateAIBot(bot, dt, now, elapsed) {
     bot.wanderAmp = moveMode === "patrol" ? 0.26 : (moveMode === "zone" ? 0.14 : (moveMode === "loot" ? 0.08 : 0));
 
     // 执行 7向触须避障 + 房门导航移动（带转向/加减速惯性与个体速度差异）
-    const movedDist = steerAndMoveAI(bot, moveGoal, moveSpd * bot.speedMul, dt);
+    // 交火横移 / 躲雷 / 被闪时目标点跟着人动，不做绕路规划
+    const movedDist = steerAndMoveAI(bot, moveGoal, moveSpd * bot.speedMul, dt, moveMode !== "combat" && moveMode !== "flee" && moveMode !== "stunned");
+    // 绕路也走不到（物资在封闭角落 / 别的楼层够不着）：记下来换个目标，不再原地死磕
+    if (bot.navUnreachable) {
+      bot.navUnreachable = false;
+      if (moveMode === "loot" && (bot.lootTarget || bot.wepTarget)) {
+        if (!bot.badLoot) bot.badLoot = new Set();
+        bot.badLoot.add(bot.lootTarget || bot.wepTarget);
+        bot.lootTarget = null; bot.wepTarget = null;
+        bot.nextLootScan = now + 300;
+      } else if (moveMode === "patrol") {
+        bot.targetPos.set(bot.group.position.x + (Math.random() - 0.5) * 60, 0, bot.group.position.z + (Math.random() - 0.5) * 60);
+      }
+    }
 
     // 脚步声：按步幅计步，带左右方位与地面材质；隔着楼层听起来更闷更小
     bot.stepAccum += movedDist;
@@ -567,19 +644,15 @@ function updateAIBot(bot, dt, now, elapsed) {
         const engageRange = isAlerted ? prof.maxRange : Math.min(prof.maxRange, (wType === "SR" || wType === "DMR") ? 110 : 78);
         const engageChance = isAlerted ? 0.88 : 0.42;
 
-        if (player.phase === "ground" && distToPlayer < engageRange && canSeePlayer && !aimInDone) {
+        if (botConsiderThrow(bot, now, distToPlayer, canSeePlayer, isAlerted)) {
+          bot.lastFireTime = now;
+        } else if (player.phase === "ground" && distToPlayer < engageRange && canSeePlayer && !aimInDone) {
           // 正在举枪开镜：瞄好再打（这一下不会去打别人）
         } else if (player.phase === "ground" && distToPlayer < engageRange && Math.random() < engageChance && canSeePlayer) {
           bot.lastFireTime = now;
           bot.alertUntil = Math.max(bot.alertUntil, now + 6000);
           setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 700);
           botFireAtPlayer(bot, distToPlayer, now);
-        } else if (isAlerted && !canSeePlayer && bot.frags > 0 && now > bot.nextGrenadeTime && player.phase === "ground" &&
-                   distToPlayer > 9 && distToPlayer < 34 && Math.abs(player.feetY - bot.group.position.y) < 4) {
-          // 玩家躲在掩体后：朝玩家位置丢手雷逼走位
-          bot.lastFireTime = now;
-          bot.nextGrenadeTime = now + 12000 + Math.random() * 9000;
-          botThrowGrenade(bot);
         } else {
           const otherBot = aiPlayers.find(o =>
             o !== bot && o.alive && o.phase === "ground" &&
@@ -590,6 +663,7 @@ function updateAIBot(bot, dt, now, elapsed) {
             bot.lastFireTime = now;
             setBotFaceHint(bot, otherBot.group.position.x, otherBot.group.position.z, 900);
             bot.foeUntil = now + 2500;
+            bot.foe = otherBot;
             bot.foeY = otherBot.group.position.y;
             bot.foeDist = otherBot.group.position.distanceTo(bot.group.position);
             if (distToPlayer < 260 && bot.weaponAtts[bot.activeSlot].muzzle !== "supp") spawnBotMuzzleFlash(bot);

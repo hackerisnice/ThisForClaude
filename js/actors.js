@@ -37,6 +37,7 @@ const player = {
   throwBag: { frag: 0, smoke: 0, stun: 0, molotov: 0 },
   throwSel: "frag",
   aimingThrow: false,
+  throwCook: 0, // 拔销后已经过去的秒数（捏雷）
   lastThrowTime: 0
 };
 const STANCE_EYE = { stand: 1.7, crouch: 1.15, prone: 0.45 };
@@ -79,6 +80,7 @@ const BOT_GEO = {
   arm: new THREE.BoxGeometry(0.19, 0.64, 0.21),
   boot: new THREE.BoxGeometry(0.28, 0.13, 0.36),
   gun: new THREE.BoxGeometry(0.12, 0.14, 0.68),
+  scope: new THREE.BoxGeometry(0.075, 0.085, 0.26),
   vest: new THREE.BoxGeometry(0.8, 0.6, 0.48),
   helmet: new THREE.SphereGeometry(0.255, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.55),
   visor: new THREE.BoxGeometry(0.34, 0.07, 0.05),
@@ -147,6 +149,11 @@ function buildSoldierModel(shirtColorOverride) {
   const botGunMesh = new THREE.Mesh(BOT_GEO.gun, BOT_MAT.gun);
   botGunMesh.position.set(0.16, 0.45, 0.3);
   botGunMesh.visible = false;
+  // 枪上的倍镜（装了倍镜才显示），开镜时贴在眼前
+  const scopeMesh = new THREE.Mesh(BOT_GEO.scope, BOT_MAT.visor);
+  scopeMesh.position.set(0, 0.115, 0.02);
+  scopeMesh.visible = false;
+  botGunMesh.add(scopeMesh);
 
   // 装备外观（纯视觉）：防弹衣（捡到枪后出现）、头盔、护目镜、背包
   const vestMesh = new THREE.Mesh(BOT_GEO.vest, BOT_MAT.vest[0]);
@@ -175,11 +182,11 @@ function buildSoldierModel(shirtColorOverride) {
   chuteMesh.castShadow = false;
   group.visible = false;
   scene.add(group);
-  return { group, legL, legR, body, head, botGunMesh, chuteMesh, legLPivot, legRPivot, upper, armLPivot, armRPivot, vestMesh, helmetMesh, pack, detailMeshes };
+  return { group, legL, legR, body, head, botGunMesh, scopeMesh, chuteMesh, legLPivot, legRPivot, upper, armLPivot, armRPivot, vestMesh, helmetMesh, pack, detailMeshes };
 }
 
 function createAIBot(id) {
-  const { group, legL, legR, body, head, botGunMesh, chuteMesh, legLPivot, legRPivot, upper, armLPivot, armRPivot, vestMesh, helmetMesh, pack, detailMeshes } = buildSoldierModel();
+  const { group, legL, legR, body, head, botGunMesh, scopeMesh, chuteMesh, legLPivot, legRPivot, upper, armLPivot, armRPivot, vestMesh, helmetMesh, pack, detailMeshes } = buildSoldierModel();
 
   // 跳伞规划：按本局航线挑一个够得着的落点（城镇/学校/遗迹/农场/野外），并在飞机最接近落点时跳下
   const plan = planBotLanding();
@@ -188,7 +195,7 @@ function createAIBot(id) {
   const bot = {
     id,
     name: (AI_NAMES[id % AI_NAMES.length] || "Survivor") + "_" + (10 + id),
-    group, legL, legR, body, head, botGunMesh, chuteMesh,
+    group, legL, legR, body, head, botGunMesh, scopeMesh, chuteMesh,
     legLPivot, legRPivot, upper, armLPivot, armRPivot, vestMesh, helmetMesh, packMesh: pack, detailMeshes, detailShown: true,
     phase: "plane", // plane -> sky -> chute -> ground
     hp: 100,
@@ -213,6 +220,15 @@ function createAIBot(id) {
     stunnedUntil: 0,
     fleeX: 0, fleeZ: 0, fleeUntil: 0,
     stepAccum: 0,
+    // 抢空投：贪心程度（0~1）与当前目标
+    greed: Math.random(),
+    airdropTarget: null,
+    nextAirdropCheck: 0,
+    // 开镜瞄准：开镜进度、瞄准稳定度、枪口俯仰角
+    adsBlend: 0,
+    aimSettle: 0,
+    aimPitch: 0,
+    foeUntil: 0, foeY: 0, foeDist: 30,
     landTarget,
     weaponKey: null,
     targetPos: new THREE.Vector3(0, 0, 0),

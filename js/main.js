@@ -43,7 +43,7 @@ function animate() {
         ad.landed = true;
         ad.chute.visible = false;
         ad.smokeEndTime = elapsed + 110;
-        populateAirdropLoot(ad.x, ad.z, ad.landY);
+        ad.lootEntries = populateAirdropLoot(ad.x, ad.z, ad.landY);
         addCollider(ad.x - 0.75, ad.x + 0.75, ad.z - 0.75, ad.z + 0.75, ad.landY, ad.landY + 1.2);
       }
     } else if (elapsed < ad.smokeEndTime) {
@@ -370,7 +370,7 @@ function animate() {
   updateFx(dt, now);
   updateSmoke(dt, now);
   updateFire(dt, now);
-  updateThrowPreview();
+  updateThrowAim(dt);
   // 远处的静态合批块整块隐藏（地图变大后视野外的城镇不再提交绘制）
   cullStaticBatches();
   // 录像：最近 16 秒战场（用于淘汰回放）

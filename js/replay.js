@@ -4,8 +4,8 @@
 
 const REC_HZ = 20, REC_SECONDS = 16;
 const REC_CAP = REC_HZ * REC_SECONDS;
-const RB_STRIDE = 24;   // 每个 AI 每帧记录的数值个数
-const RP_STRIDE = 13;   // 玩家每帧记录的数值个数
+const RB_STRIDE = 25;   // 每个 AI 每帧记录的数值个数
+const RP_STRIDE = 15;   // 玩家每帧记录的数值个数
 const REC_BOTS = aiPlayers.length;
 const STANCE_CODE = { stand: 0, crouch: 1, prone: 2 };
 const PHASE_CODE = { plane: 0, sky: 1, chute: 2, ground: 3, dead: 4 };
@@ -35,7 +35,7 @@ function writeBotState(bot, A, o) {
   const g = bot.group;
   _rq.set(0, 0, 1).applyQuaternion(g.quaternion);
   A[o] = (g.visible ? 1 : 0) | (bot.chuteMesh.visible ? 2 : 0) | (bot.botGunMesh.visible ? 4 : 0) |
-    (bot.vestMesh.visible ? 8 : 0) | (bot.helmetMesh.visible ? 16 : 0) | (bot.packMesh.visible ? 32 : 0);
+    (bot.vestMesh.visible ? 8 : 0) | (bot.helmetMesh.visible ? 16 : 0) | (bot.packMesh.visible ? 32 : 0) | (bot.scopeMesh.visible ? 64 : 0);
   A[o + 1] = g.position.x; A[o + 2] = g.position.y; A[o + 3] = g.position.z;
   A[o + 4] = Math.atan2(_rq.x, _rq.z);
   A[o + 5] = bot.legLPivot.rotation.x; A[o + 6] = bot.legRPivot.rotation.x;
@@ -45,6 +45,7 @@ function writeBotState(bot, A, o) {
   A[o + 16] = bot.botGunMesh.position.x; A[o + 17] = bot.botGunMesh.position.y; A[o + 18] = bot.botGunMesh.position.z;
   A[o + 19] = bot.botGunMesh.rotation.x;
   A[o + 20] = bot.vestLv; A[o + 21] = bot.helmLv; A[o + 22] = bot.bagLv; A[o + 23] = bot.alive ? 1 : 0;
+  A[o + 24] = bot.head.rotation.z; // 开镜歪头贴腮
 }
 function writePlayerState(A, o) {
   A[o] = playerRig.position.x; A[o + 1] = player.feetY; A[o + 2] = playerRig.position.z;
@@ -55,6 +56,9 @@ function writePlayerState(A, o) {
   A[o + 8] = player.weapons[player.activeSlot] ? 1 : 0;
   A[o + 9] = player.hp;
   A[o + 10] = player.helm ? player.helm.lv : 0; A[o + 11] = player.vest ? player.vest.lv : 0; A[o + 12] = player.bagLv || 0;
+  const w = player.weapons[player.activeSlot];
+  A[o + 13] = w && w.attachments && w.attachments.scope ? 1 : 0;
+  A[o + 14] = player.isADS ? 1 : 0;
 }
 
 function replayRecordTick(dt) {
@@ -108,17 +112,43 @@ function makeReplayClip(t0, t1, meta) {
   return clip;
 }
 
-// 事件：开枪（shooter：-1 = 玩家，>=0 = AI 编号；n 发连射，间隔 gap 秒）
-function replayShotEvent(shooter, fx, fy, fz, tx, ty, tz, hit, n = 1, gap = 0.09) {
+// 事件：开枪（shooter：-1 = 玩家，>=0 = AI 编号）。ends = 每发子弹的终点 [x,y,z,...]，
+// impacts = 每发的结果（0 擦身飞过 / 1 打中人 / 2 打在地面墙面），连射每发间隔 gap 秒
+function replayShotEvent(shooter, fx, fy, fz, ends, impacts, gap = 0.09) {
   if (replayState.active) return;
-  replayRec.events.push({ t: replayRec.clock, type: "shot", s: shooter, fx, fy, fz, tx, ty, tz, hit: !!hit, n, gap });
+  replayRec.events.push({ t: replayRec.clock, type: "shot", s: shooter, fx, fy, fz, ends, impacts, gap });
 }
-// AI 开枪：从枪口打向目标点，没打中时随机偏一点
+// AI 开枪：子弹从真实枪口出发。打中 → 落在目标身上；没打中 → 从目标身边擦过飞远
+// （偏差按距离和是否开镜决定，开镜后的偏差明显更小）
+const _rpMz = new THREE.Vector3(), _rpDir = new THREE.Vector3(), _rpPerp = new THREE.Vector3();
 function replayBotShot(bot, tx, ty, tz, hit, n = 1) {
-  const p = bot.group.position;
-  _rq.set(0, 0, 1).applyQuaternion(bot.group.quaternion);
-  const mx = hit ? 0 : (Math.random() - 0.5) * 3, my = hit ? 0 : (Math.random() - 0.3) * 1.5, mz = hit ? 0 : (Math.random() - 0.5) * 3;
-  replayShotEvent(bot.id, p.x + _rq.x * 0.6, p.y + 1.42, p.z + _rq.z * 0.6, tx + mx, ty + my, tz + mz, hit, n);
+  if (replayState.active) return;
+  const m = botMuzzlePosition(bot, _rpMz);
+  const ends = [], impacts = [];
+  for (let k = 0; k < n; k++) {
+    const kHit = hit && (k === 0 || Math.random() < 0.35);
+    _rpDir.set(tx - m.x, ty - m.y, tz - m.z);
+    const d = _rpDir.length() || 1;
+    _rpDir.divideScalar(d);
+    if (kHit) {
+      ends.push(tx + (Math.random() - 0.5) * 0.25, ty + (Math.random() - 0.5) * 0.35, tz + (Math.random() - 0.5) * 0.25);
+      impacts.push(1);
+      continue;
+    }
+    // 垂直于弹道方向的随机偏移
+    _rpPerp.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5);
+    _rpPerp.addScaledVector(_rpDir, -_rpPerp.dot(_rpDir)).normalize();
+    const r = 0.45 + Math.random() * (0.3 + d * 0.012 * (1.6 - bot.adsBlend));
+    _rpDir.set(tx + _rpPerp.x * r - m.x, ty + _rpPerp.y * r - m.y, tz + _rpPerp.z * r - m.z).normalize();
+    let len = d + 45, impact = 0;
+    if (_rpDir.y < -0.01) {
+      const tg = (m.y - 0.05) / -_rpDir.y; // 打到地上
+      if (tg < len) { len = tg; impact = 2; }
+    }
+    ends.push(m.x + _rpDir.x * len, m.y + _rpDir.y * len, m.z + _rpDir.z * len);
+    impacts.push(impact);
+  }
+  replayShotEvent(bot.id, m.x, m.y, m.z, ends, impacts);
 }
 function replayFxEvent(kind, x, y, z) {
   if (replayState.active) return;
@@ -325,6 +355,8 @@ function applyBotState(bot, A, oa, B, ob, al) {
   if (helm > 0) bot.helmetMesh.material = BOT_MAT.helmet[helm - 1];
   bot.packMesh.visible = (f & 32) !== 0;
   if (bag > 0) bot.packMesh.scale.setScalar(0.75 + bag * 0.15);
+  bot.scopeMesh.visible = (f & 64) !== 0;
+  bot.head.rotation.z = L(24);
 }
 
 // 某个角色（-1 = 玩家）在 t 时刻的位置与朝向（out.x/y/z 为脚底，out.fx/fz 为面朝方向）
@@ -397,6 +429,7 @@ function applyReplayFrame(clip, t) {
   g.rotation.set(0, yw + Math.PI, 0);
   av.chuteMesh.visible = phase === 2;
   av.botGunMesh.visible = hasGun && phase >= 3;
+  av.scopeMesh.visible = P[oa + 13] > 0;
   av.vestMesh.visible = P[oa + 11] > 0;
   if (P[oa + 11] > 0) av.vestMesh.material = BOT_MAT.vest[P[oa + 11] - 1];
   av.helmetMesh.visible = P[oa + 10] > 0;
@@ -412,10 +445,12 @@ function applyReplayFrame(clip, t) {
     av.upper.rotation.set(aiming ? 0.02 : 0.03 + Math.min(1, spd / 6) * 0.15, 0, 0);
     av.upper.position.y = 0.72;
     const up = aiming ? Math.max(-0.6, Math.min(0.6, pt)) : 0;
-    av.armLPivot.rotation.set(aiming ? -1.38 - up : -0.1 - sw * 0.5, aiming ? 0.62 : 0, aiming ? 0 : -0.06);
-    av.armRPivot.rotation.set(aiming ? -1.22 - up : -0.1 + sw * 0.5, aiming ? -0.22 : 0, aiming ? 0 : 0.06);
-    av.botGunMesh.position.set(aiming ? 0.12 : 0.16, aiming ? 0.72 + up * 0.25 : 0.42, aiming ? 0.44 : 0.3);
+    const adsP = aiming && P[oa + 14] > 0; // 玩家开镜：枪抬到眼前、歪头贴腮
+    av.armLPivot.rotation.set(aiming ? -1.38 - up - (adsP ? 0.22 : 0) : -0.1 - sw * 0.5, aiming ? (adsP ? 0.7 : 0.62) : 0, aiming ? 0 : -0.06);
+    av.armRPivot.rotation.set(aiming ? -1.22 - up - (adsP ? 0.3 : 0) : -0.1 + sw * 0.5, aiming ? (adsP ? -0.36 : -0.22) : 0, aiming ? 0 : 0.06);
+    av.botGunMesh.position.set(aiming ? (adsP ? 0.06 : 0.12) : 0.16, aiming ? (adsP ? 0.97 : 0.72) + up * 0.25 : 0.42, aiming ? (adsP ? 0.39 : 0.44) : 0.3);
     av.botGunMesh.rotation.x = aiming ? -up : 0.55;
+    av.head.rotation.z = adsP ? 0.16 : 0;
     // 蹲：整个人矮一截、腿向前收；趴：整个人趴平
     if (stance === 1) { g.position.y -= 0.42; av.legLPivot.rotation.x = -1.25; av.legRPivot.rotation.x = -0.35; }
     if (stance === 2) { g.rotation.x = 1.45; g.position.y += 0.25; }
@@ -445,8 +480,8 @@ function applyReplayFrame(clip, t) {
 // 播放事件：子弹轨迹、枪声、爆炸
 function triggerReplayEvent(e) {
   if (e.type === "shot") {
-    for (let k = 0; k < e.n; k++) {
-      rpTracers.push({ born: e.t + k * e.gap, fx: e.fx, fy: e.fy, fz: e.fz, tx: e.tx, ty: e.ty, tz: e.tz, hit: e.hit, done: false, flashed: false });
+    for (let k = 0; k < e.impacts.length; k++) {
+      rpTracers.push({ born: e.t + k * e.gap, fx: e.fx, fy: e.fy, fz: e.fz, tx: e.ends[k * 3], ty: e.ends[k * 3 + 1], tz: e.ends[k * 3 + 2], impact: e.impacts[k], done: false, flashed: false });
     }
   } else if (e.type === "fx") {
     const p = new THREE.Vector3(e.x, e.y + 0.4, e.z);
@@ -489,7 +524,8 @@ function updateReplayTracers(t) {
     }
     if (s - TRACER_LEN > dist) {
       tr.done = true;
-      spawnFx({ pos: new THREE.Vector3(tr.tx, tr.ty, tr.tz), color: tr.hit ? 0xb00000 : 0x9a8f80, s0: 0.2, s1: tr.hit ? 0.9 : 0.6, a0: 0.9, a1: 0, life: 0.35 });
+      // 打中人 → 血雾；打在地面墙面 → 尘土；擦身飞过 → 什么都不留
+      if (tr.impact) spawnFx({ pos: new THREE.Vector3(tr.tx, tr.ty, tr.tz), color: tr.impact === 1 ? 0xb00000 : 0x9a8f80, s0: 0.2, s1: tr.impact === 1 ? 0.9 : 0.6, a0: 0.9, a1: 0, life: 0.35 });
       continue;
     }
     if (n >= RP_TRACERS) continue;

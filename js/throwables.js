@@ -351,6 +351,24 @@ function throwLaunch(id) {
   return { origin: start, vel };
 }
 
+// 引信：手雷 / 震爆弹拔销就开始倒计时（可以“捏雷”，在手里捏太久会炸在自己手上），
+// 烟雾弹出手后才计时，燃烧瓶撞到东西就燃
+const COOKABLE_THROWS = { frag: true, stun: true };
+const throwHudEl = document.getElementById("throw-hud");
+const throwHudRing = document.getElementById("throw-hud-ring");
+const throwHudTime = document.getElementById("throw-hud-time");
+const throwHudName = document.getElementById("throw-hud-name");
+const throwHudTip = document.getElementById("throw-hud-tip");
+const throwCancelBtn = document.getElementById("btn-throw-cancel");
+const THROW_LINE_COLOR = new THREE.Color(0xfff1b0), THROW_DANGER_COLOR = new THREE.Color(0xff4a3a);
+
+function showThrowAimUI(on) {
+  throwHudEl.style.display = on ? "flex" : "none";
+  throwCancelBtn.style.display = on ? "flex" : "none";
+  throwCancelBtn.classList.remove("armed");
+  throwHudEl.dataset.key = "";
+}
+
 function beginThrowAim() {
   if (player.phase !== "ground" || player.aimingThrow) return;
   if ((player.throwBag[player.throwSel] || 0) <= 0) {
@@ -362,24 +380,37 @@ function beginThrowAim() {
   if (player.casting && player.casting.title.includes("💊")) cancelCastProgress();
   player.isFiring = false;
   player.aimingThrow = true;
+  player.throwCook = 0;
   throwHandMesh.geometry = throwableGeo(player.throwSel);
   throwHandMesh.visible = true;
+  showThrowAimUI(true);
   sfx.playPinPull();
 }
 
-function releaseThrow() {
-  if (!player.aimingThrow) return;
+// 剩余引信（只对可以捏雷的手雷 / 震爆弹有意义）
+function throwFuseLeft() {
+  return Math.max(0, THROWABLES_DATA[player.throwSel].fuse - player.throwCook);
+}
+
+function endThrowAim() {
   player.aimingThrow = false;
   throwHandMesh.visible = false;
   throwPreviewLine.visible = false;
   throwPreviewRing.visible = false;
+  showThrowAimUI(false);
+}
+
+function releaseThrow() {
+  if (!player.aimingThrow) return;
+  endThrowAim();
   const id = player.throwSel;
   if (player.phase !== "ground" || (player.throwBag[id] || 0) <= 0) return;
   const { origin, vel } = throwLaunch(id);
   player.throwBag[id]--;
   player.lastThrowTime = performance.now();
   sfx.playThrow();
-  spawnThrowable(id, origin, vel, "你 (Player)", true);
+  // 捏过的雷出手后只剩剩余引信
+  spawnThrowable(id, origin, vel, "你 (Player)", true, COOKABLE_THROWS[id] ? Math.max(0.05, throwFuseLeft()) : undefined);
   if (player.throwBag[id] <= 0) {
     const next = THROW_ORDER.find(k => player.throwBag[k] > 0);
     if (next) player.throwSel = next;
@@ -387,13 +418,22 @@ function releaseThrow() {
   updateAllHUD();
 }
 
-// 不扔出、直接收回（阵亡 / 打开背包时）
-function cancelThrowAim() {
+// 不扔出、把保险插回去（点“取消投掷” / 阵亡 / 打开背包时）
+function cancelThrowAim(byUser) {
   if (!player.aimingThrow) return;
-  player.aimingThrow = false;
-  throwHandMesh.visible = false;
-  throwPreviewLine.visible = false;
-  throwPreviewRing.visible = false;
+  endThrowAim();
+  if (byUser) showToast("已取消投掷");
+}
+
+// 捏雷捏太久：在自己手里炸开
+function throwExplodeInHand() {
+  const id = player.throwSel;
+  endThrowAim();
+  player.throwBag[id] = Math.max(0, (player.throwBag[id] || 0) - 1);
+  const p = new THREE.Vector3(playerRig.position.x, player.feetY + 0.9, playerRig.position.z);
+  spawnThrowable(id, p, new THREE.Vector3(0, 0, 0), "你 (Player)", true, 0);
+  showToast(id === "frag" ? "💥 手雷捏太久，在手里炸了！" : "⚡ 震爆弹在手里炸开了！");
+  updateAllHUD();
 }
 
 function cycleThrowable() {
@@ -401,28 +441,71 @@ function cycleThrowable() {
   if (!owned.length) { showToast("没有投掷物"); return; }
   const i = owned.indexOf(player.throwSel);
   player.throwSel = owned[(i + 1) % owned.length];
-  if (player.aimingThrow) throwHandMesh.geometry = throwableGeo(player.throwSel);
+  if (player.aimingThrow) {
+    // 换了一颗：重新拔销，倒计时从头开始
+    throwHandMesh.geometry = throwableGeo(player.throwSel);
+    player.throwCook = 0;
+    sfx.playPinPull();
+  }
   sfx.playBoltAction();
   updateAllHUD();
 }
 
-// 瞄准时每帧模拟一遍抛物线，画出轨迹与落点
-function updateThrowPreview() {
+// 投掷瞄准的倒计时界面
+function updateThrowHud() {
+  const id = player.throwSel, data = THROWABLES_DATA[id];
+  let time, frac = 1, tip;
+  const danger = COOKABLE_THROWS[id] && throwFuseLeft() < 1.2;
+  if (COOKABLE_THROWS[id]) {
+    const left = throwFuseLeft();
+    time = left.toFixed(1);
+    frac = left / data.fuse;
+    tip = IS_MOBILE ? "松手投掷 · 拖到 ✕ 取消" : "松开 G 投掷 · 右键 / X 取消";
+  } else if (id === "smoke") {
+    time = data.fuse.toFixed(1);
+    tip = `出手 ${data.fuse} 秒后放烟 · ${IS_MOBILE ? "拖到 ✕ 取消" : "右键 / X 取消"}`;
+  } else {
+    time = "🔥";
+    tip = `撞到东西即燃 · ${IS_MOBILE ? "拖到 ✕ 取消" : "右键 / X 取消"}`;
+  }
+  const key = id + "|" + time + "|" + danger;
+  if (throwHudEl.dataset.key === key) return;
+  throwHudEl.dataset.key = key;
+  throwHudTime.innerText = time;
+  throwHudName.innerText = `${data.icon} ${data.name}`;
+  throwHudTip.innerText = tip;
+  throwHudEl.classList.toggle("danger", !!danger);
+  const deg = Math.round(frac * 360);
+  throwHudRing.style.background = `conic-gradient(${danger ? "#ff3b2f" : "#ffd000"} ${deg}deg, rgba(255,255,255,0.14) ${deg}deg)`;
+}
+
+// 瞄准中每帧：捏雷计时、倒计时界面、抛物线预览（画到第一次落地或空爆的位置）
+function updateThrowAim(dt) {
   if (!player.aimingThrow) return;
-  const { origin, vel } = throwLaunch(player.throwSel);
+  const id = player.throwSel;
+  if (COOKABLE_THROWS[id]) {
+    player.throwCook += dt;
+    if (throwFuseLeft() <= 0) { throwExplodeInHand(); return; }
+  }
+  updateThrowHud();
+  const maxT = COOKABLE_THROWS[id] ? throwFuseLeft() : Infinity;
+  const { origin, vel } = throwLaunch(id);
   const p = origin.clone(), v = vel.clone();
   const arr = throwPreviewLine.geometry.attributes.position.array;
-  let n = 0, landed = false;
+  let n = 0, stopped = false, simT = 0;
   for (; n < THROW_PREVIEW_POINTS; n++) {
     arr[n * 3] = p.x; arr[n * 3 + 1] = p.y; arr[n * 3 + 2] = p.z;
-    if (landed) continue;
+    if (stopped) continue;
     for (let k = 0; k < 3; k++) {
-      if (throwPhysicsStep(p, v, 1 / 45)) { landed = true; break; }
+      simT += 1 / 45;
+      if (throwPhysicsStep(p, v, 1 / 45) || simT >= maxT) { stopped = true; break; }
     }
   }
-  if (!landed) n = THROW_PREVIEW_POINTS;
   for (let k = n; k < THROW_PREVIEW_POINTS; k++) { arr[k * 3] = p.x; arr[k * 3 + 1] = p.y; arr[k * 3 + 2] = p.z; }
   throwPreviewLine.geometry.attributes.position.needsUpdate = true;
+  const danger = COOKABLE_THROWS[id] && throwFuseLeft() < 1.2;
+  throwPreviewLine.material.color.copy(danger ? THROW_DANGER_COLOR : THROW_LINE_COLOR);
+  throwPreviewRing.material.color.copy(danger || simT >= maxT ? THROW_DANGER_COLOR : THROW_LINE_COLOR);
   throwPreviewLine.visible = true;
   throwPreviewRing.position.set(p.x, p.y - 0.03, p.z);
   throwPreviewRing.visible = true;

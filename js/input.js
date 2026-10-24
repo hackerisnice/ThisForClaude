@@ -88,10 +88,17 @@ function bindFireDragButton(btnId) {
 bindFireDragButton("btn-fire-left");
 bindFireDragButton("btn-fire-right");
 
-// 投掷键：按住 = 拔销瞄准（手指可以拖动转视角调整抛物线），松手 = 扔出
+// 投掷键：按住 = 拔销瞄准（显示引信倒计时与抛物线，手指可以拖动转视角调整），松手 = 扔出；
+// 按住期间旁边出现“✕ 取消投掷”：手指拖到上面再松开、或用另一根手指点它，都会取消这次投掷
 (function bindThrowButton() {
   const btn = document.getElementById("btn-throw");
+  const cancelBtn = document.getElementById("btn-throw-cancel");
   let touchId = null, lastX = 0, lastY = 0, lastT = 0;
+  const overCancel = (x, y) => {
+    if (cancelBtn.style.display === "none") return false;
+    const r = cancelBtn.getBoundingClientRect();
+    return x > r.left - 12 && x < r.right + 12 && y > r.top - 12 && y < r.bottom + 12;
+  };
   btn.addEventListener("touchstart", e => {
     e.preventDefault(); e.stopPropagation();
     if (touchId !== null) return;
@@ -107,16 +114,22 @@ bindFireDragButton("btn-fire-right");
       if (t.identifier !== touchId) continue;
       const dx = t.clientX - lastX, dy = t.clientY - lastY;
       lastX = t.clientX; lastY = t.clientY;
-      applyLookDelta(dx, dy, TOUCH_LOOK_BASE, touchLookAccel(dx, dy, e.timeStamp - lastT));
+      // 拖到取消键上时不再转视角，按钮亮起提示“松手即取消”
+      const armed = overCancel(t.clientX, t.clientY);
+      cancelBtn.classList.toggle("armed", armed);
+      if (!armed) applyLookDelta(dx, dy, TOUCH_LOOK_BASE, touchLookAccel(dx, dy, e.timeStamp - lastT));
       lastT = e.timeStamp;
     }
   }, { passive: false });
   const endFn = e => {
     for (let i = 0; i < e.changedTouches.length; i++) {
-      if (e.changedTouches[i].identifier !== touchId) continue;
+      const t = e.changedTouches[i];
+      if (t.identifier !== touchId) continue;
       touchId = null;
       btn.classList.remove("pressing");
-      if (e.type === "touchcancel") cancelThrowAim(); else releaseThrow();
+      if (e.type === "touchcancel") cancelThrowAim();
+      else if (overCancel(t.clientX, t.clientY)) cancelThrowAim(true);
+      else releaseThrow();
     }
   };
   btn.addEventListener("touchend", endFn);
@@ -124,6 +137,9 @@ bindFireDragButton("btn-fire-right");
   // 桌面端鼠标点按
   btn.addEventListener("mousedown", e => { e.stopPropagation(); beginThrowAim(); });
   btn.addEventListener("mouseup", e => { e.stopPropagation(); releaseThrow(); });
+  // 取消键：另一根手指直接点
+  cancelBtn.addEventListener("touchstart", e => { e.preventDefault(); e.stopPropagation(); cancelThrowAim(true); }, { passive: false });
+  cancelBtn.addEventListener("mousedown", e => { e.stopPropagation(); cancelThrowAim(true); });
 })();
 
 let lookTouchId = null, lookLastX = 0, lookLastY = 0, lookLastT = 0;
@@ -293,6 +309,7 @@ window.addEventListener("keydown", e => {
   if (e.code === "KeyB") cycleWeaponFireMode(player.activeSlot);
   if (e.code === "KeyM") toggleBigMap();
   if (e.code === "KeyG" && !e.repeat) beginThrowAim();
+  if (e.code === "KeyX" && player.aimingThrow) cancelThrowAim(true);
   if (e.code === "KeyT") cycleThrowable();
   if (e.code === "Tab") {
     e.preventDefault();
@@ -313,6 +330,7 @@ renderer.domElement.addEventListener("mousedown", e => {
     return;
   }
   if (e.button === 0) startTrigger();
+  else if (e.button === 2 && player.aimingThrow) cancelThrowAim(true);
   else if (e.button === 2 && !player.aimingThrow) { player.reopenADSAfterBolt = false; player.isADS = !player.isADS; updateScopeState(); }
 });
 window.addEventListener("mouseup", e => { if (e.button === 0) stopTrigger(); });

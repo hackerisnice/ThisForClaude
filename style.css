@@ -343,3 +343,33 @@ body.replay-mode > *:not(#canvas-container):not(#replay-ui):not(#portrait-warn):
 #rp-fill { height: 100%; width: 0; background: linear-gradient(90deg, #ff9900, #ffd000); border-radius: 5px; }
 #rp-kill-mark { position: absolute; top: -3px; width: 3px; height: 16px; margin-left: -1px; background: #ff2a1a; border-radius: 1px; }
 #rp-time { font-size: 11px; color: #ccc; min-width: 40px; text-align: right; }
+
+/* 投掷瞄准：引信倒计时（准星下方）+ 取消投掷键（只在按住投掷键时出现） */
+#throw-hud {
+  display: none; position: absolute; top: calc(50% + 30px); left: 50%; transform: translateX(-50%);
+  z-index: 19; pointer-events: none; align-items: center; gap: 8px;
+  background: rgba(8, 10, 14, 0.62); border: 1px solid rgba(255, 208, 0, 0.55); border-radius: 22px; padding: 4px 12px 4px 4px;
+}
+#throw-hud-ring {
+  width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: conic-gradient(#ffd000 360deg, rgba(255,255,255,0.14) 0deg);
+}
+#throw-hud-time {
+  width: 30px; height: 30px; border-radius: 50%; background: #11151b; color: #ffd000;
+  display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 900;
+}
+#throw-hud-text { display: flex; flex-direction: column; line-height: 1.25; text-shadow: 0 1px 2px #000; }
+#throw-hud-name { font-size: 11px; color: #fff; }
+#throw-hud-tip { font-size: 9px; color: #ffd27d; white-space: nowrap; }
+#throw-hud.danger { border-color: #ff3b2f; animation: throwPulse 0.35s infinite alternate; }
+#throw-hud.danger #throw-hud-time { color: #ff3b2f; }
+@keyframes throwPulse { from { box-shadow: 0 0 0 rgba(255, 59, 47, 0); } to { box-shadow: 0 0 14px rgba(255, 59, 47, 0.85); } }
+#btn-throw-cancel {
+  display: none; position: absolute; z-index: 19; right: 186px; bottom: 100px; width: 54px; height: 54px;
+  border-radius: 50%; flex-direction: column; align-items: center; justify-content: center;
+  background: rgba(150, 20, 15, 0.55); border: 1.5px solid rgba(255, 90, 70, 0.9); color: #fff;
+  font-size: 18px; font-weight: 900; line-height: 1; text-shadow: 0 1px 2px #000; cursor: pointer;
+  opacity: var(--btn-opacity); transform: scale(var(--btn-scale)); transform-origin: bottom right;
+}
+#btn-throw-cancel small { font-size: 8px; margin-top: 2px; }
+#btn-throw-cancel.armed { background: rgba(230, 40, 25, 0.9); opacity: 1; transform: scale(calc(var(--btn-scale) * 1.12)); }

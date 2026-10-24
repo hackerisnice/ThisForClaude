@@ -185,7 +185,8 @@ function fireCurrentWeapon() {
       // 录像：子弹轨迹（从枪口略下方出发，打到命中点或 300 米外）
       const ro = raycaster.ray.origin, rd = raycaster.ray.direction;
       const end = hits.length ? hits[0].point : ro.clone().addScaledVector(rd, 300);
-      replayShotEvent(-1, ro.x + rd.x * 0.6, ro.y - 0.2 + rd.y * 0.6, ro.z + rd.z * 0.6, end.x, end.y, end.z, hits.length > 0 && !!(hits[0].object.userData && hits[0].object.userData.isAI));
+      const impact = !hits.length ? 0 : (hits[0].object.userData && hits[0].object.userData.isAI ? 1 : 2);
+      replayShotEvent(-1, ro.x + rd.x * 0.6, ro.y - 0.2 + rd.y * 0.6, ro.z + rd.z * 0.6, [end.x, end.y, end.z], [impact]);
     }
 
     if (hits.length > 0) {

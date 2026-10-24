@@ -61,9 +61,16 @@ const airdrops = [];
 let nextAirdropTime = 80;
 
 function spawnAirdropEvent() {
-  const dropX = zoneState.cx + (Math.random() - 0.5) * zoneState.targetR * 1.1;
-  const dropZ = zoneState.cz + (Math.random() - 0.5) * zoneState.targetR * 1.1;
-  const landY = getGroundHeight(dropX, dropZ, 1e9); // 可能落在平顶楼的屋顶上
+  // 落点避开房顶和河面（落在楼顶上谁都拿不到）
+  let dropX = 0, dropZ = 0;
+  for (let tries = 0; tries < 20; tries++) {
+    dropX = zoneState.cx + (Math.random() - 0.5) * zoneState.targetR * 1.1;
+    dropZ = zoneState.cz + (Math.random() - 0.5) * zoneState.targetR * 1.1;
+    dropX = Math.max(-MAP_LIMIT + 30, Math.min(MAP_LIMIT - 30, dropX));
+    dropZ = Math.max(-MAP_LIMIT + 30, Math.min(MAP_LIMIT - 30, dropZ));
+    if (!getBuildingContainingPoint(dropX, dropZ, 4) && Math.abs(dropZ - RIVER_Z) > RIVER_HALF + 6 && !isPointBlocked2D(dropX, dropZ, 2.5, 0)) break;
+  }
+  const landY = getGroundHeight(dropX, dropZ, 1e9);
 
   const crateGroup = new THREE.Group();
   const redBox = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.1, 1.4), new THREE.MeshLambertMaterial({ color: 0xb81d13 }));
@@ -97,13 +104,16 @@ function spawnAirdropEvent() {
     x: dropX, z: dropZ, landY,
     crateGroup, chute, smokeParticles,
     landed: false,
-    smokeEndTime: 0
+    smokeEndTime: 0,
+    lootEntries: null // 落地后生成的物资（AI 据此判断空投还有没有东西）
   });
 
   showToast("✈️ 空投补给箱已投放在安全区附近，注意抬头查看红色浓烟！");
 }
 
+// 返回这次生成的全部物资条目
 function populateAirdropLoot(ax, az, ay = 0) {
+  const first = worldLootItems.length;
   const airdropWeps = ["awm", "amr", "aug", "mk14", "m249"];
   const wKey = airdropWeps[Math.floor(Math.random() * airdropWeps.length)];
   const wep = WEAPONS_DATA[wKey];
@@ -126,4 +136,7 @@ function populateAirdropLoot(ax, az, ay = 0) {
   spawnRandomGroundLoot(ax, az - 1.0, {
     kind: "med", id: "adrenaline", name: MEDS_DATA["adrenaline"].name, count: 1
  }, ay);
+  const entries = worldLootItems.slice(first);
+  entries.forEach(e => { e.item.airdrop = true; });
+  return entries;
 }

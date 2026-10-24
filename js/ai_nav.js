@@ -199,20 +199,23 @@ function animateBotBody(bot, dt, aiming, distToPlayer, now) {
   const speedN = Math.min(1, bot.curSpeed / 6);
   const swing = Math.sin(bot.walkCycle);
 
-  const targetLean = 0.03 + speedN * 0.17 * (1 - aim * 0.6);
+  // 开镜：枪托抵肩、枪抬到眼前、歪头贴腮；上半身随目标高度俯仰（枪口真的对着目标）
+  const ads = (bot.adsBlend || 0) * aim;
+  const targetLean = 0.03 + speedN * 0.17 * (1 - aim * 0.6) - (bot.aimPitch || 0) * aim * 0.9;
   bot.upper.rotation.x += (targetLean - bot.upper.rotation.x) * k;
   bot.upper.rotation.y = swing * 0.07 * speedN * (1 - aim);
   bot.upper.position.y = 0.72 + Math.abs(Math.cos(bot.walkCycle)) * 0.045 * speedN + Math.sin(now * 0.002 + bot.wanderPhase) * 0.006;
+  bot.head.rotation.z = 0.16 * ads;
 
   const armSwing = swing * 0.55 * speedN * (1 - aim);
-  bot.armLPivot.rotation.x = (-0.1 - armSwing) * (1 - aim) + (-1.38) * aim;
-  bot.armRPivot.rotation.x = (-0.1 + armSwing) * (1 - aim) + (-1.22) * aim;
-  bot.armLPivot.rotation.y = 0.62 * aim;
-  bot.armRPivot.rotation.y = -0.22 * aim;
+  bot.armLPivot.rotation.x = (-0.1 - armSwing) * (1 - aim) + (-1.38 - 0.22 * ads) * aim;
+  bot.armRPivot.rotation.x = (-0.1 + armSwing) * (1 - aim) + (-1.22 - 0.3 * ads) * aim;
+  bot.armLPivot.rotation.y = (0.62 + 0.08 * ads) * aim;
+  bot.armRPivot.rotation.y = (-0.22 - 0.14 * ads) * aim;
   bot.armLPivot.rotation.z = -0.06 * (1 - aim);
   bot.armRPivot.rotation.z = 0.06 * (1 - aim);
 
-  bot.botGunMesh.position.set(0.16 - 0.04 * aim, 0.42 + 0.3 * aim, 0.3 + 0.14 * aim);
+  bot.botGunMesh.position.set(0.16 - 0.04 * aim - 0.06 * ads, 0.42 + 0.3 * aim + 0.25 * ads, 0.3 + 0.14 * aim - 0.05 * ads);
   // 换弹 / 切枪时枪口下压晃动，打药时双手收在胸前
   const reloading = now < bot.reloadUntil || now < bot.swapUntil;
   bot.botGunMesh.rotation.x = 0.55 * (1 - aim) + (reloading ? 0.35 + Math.sin(now * 0.012) * 0.15 : 0);

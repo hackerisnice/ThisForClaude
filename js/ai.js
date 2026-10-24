@@ -39,6 +39,23 @@ function botSetActiveSlot(bot, slot) {
   bot.weaponKey = bot.weapons[slot];
   bot.botGunMesh.visible = !!bot.weaponKey;
   if (bot.weaponKey) bot.botGunMesh.scale.set(1, 1, BOT_GUN_LENGTH[WEAPONS_DATA[bot.weaponKey].type] || 1);
+  botRefreshGunLook(bot);
+}
+// 手上的枪装了倍镜就在模型上显示出来
+function botRefreshGunLook(bot) {
+  bot.scopeMesh.visible = !!(bot.weaponKey && bot.weaponAtts[bot.activeSlot].scope);
+}
+// 开镜所需时间：倍率越高抬枪越慢（与玩家开镜动画同一量级）
+function botAdsTime(bot) {
+  const sc = bot.weaponKey && bot.weaponAtts[bot.activeSlot].scope;
+  const zoom = sc && ATTACHMENTS_DATA[sc] ? ATTACHMENTS_DATA[sc].zoom : 1.1;
+  return 0.2 + Math.min(0.24, (zoom - 1) * 0.035);
+}
+// 瞄准方式对命中率的影响：开镜后明显更准（瞄得越久越稳），不开镜腰射远了就很飘；10 米内腰射不吃亏
+function botAimFactor(bot, dist) {
+  const hip = dist < 10 ? 1.0 : (dist < 25 ? 0.72 : 0.5);
+  const ads = 1.3 + 0.15 * bot.aimSettle;
+  return hip + (ads - hip) * bot.adsBlend;
 }
 
 function botGiveWeapon(bot, key, atts) {
@@ -69,7 +86,7 @@ function botAttachmentTargetSlot(bot, item) {
 // AI 对一件物资的需求度（0 = 不需要）
 function botLootScore(bot, item) {
   if (item.kind === "weapon") {
-    if (bot.weapons[0] && bot.weapons[1]) return 0;
+    if (bot.weapons[0] && bot.weapons[1]) return item.airdrop && botAirdropSwapSlot(bot, item.id) >= 0 ? 3.0 : 0;
     const t = WEAPONS_DATA[item.id].type;
     const curT = bot.weaponKey ? WEAPONS_DATA[bot.weaponKey].type : null;
     // 第二把枪优先拿与手上互补的类型（狙+步、喷+步……），同类型的兴趣较低
@@ -103,10 +120,33 @@ function scanBotLootTarget(bot, now) {
   bot.lootTarget = best;
 }
 
+// 两把枪都满时捡空投枪：换掉同类型的那把，没有同类型就换掉更不顺手的一把（喷子/冲锋枪优先被换）
+const BOT_GUN_VALUE = { SG: 0, SMG: 1, AR: 2, LMG: 3, DMR: 3, SR: 3 };
+function botAirdropSwapSlot(bot, newId) {
+  const t = WEAPONS_DATA[newId].type;
+  for (let i = 0; i < 2; i++) if (bot.weapons[i] === newId) return -1;
+  for (let i = 0; i < 2; i++) if (WEAPONS_DATA[bot.weapons[i]].type === t && !WEAPONS_DATA[bot.weapons[i]].airdropOnly) return i;
+  const v = i => (WEAPONS_DATA[bot.weapons[i]].airdropOnly ? 9 : BOT_GUN_VALUE[WEAPONS_DATA[bot.weapons[i]].type]);
+  const slot = v(0) <= v(1) ? 0 : 1;
+  return v(slot) < 9 ? slot : -1;
+}
+
 function botPickupLoot(bot, entry, now) {
   const it = entry.item;
   if (botLootScore(bot, it) <= 0) return;
-  if (it.kind === "weapon") {
+  if (it.kind === "weapon" && bot.weapons[0] && bot.weapons[1]) {
+    // 换枪：旧枪连同配件丢在地上
+    const slot = botAirdropSwapSlot(bot, it.id);
+    const old = bot.weapons[slot], wd = WEAPONS_DATA[old];
+    spawnRandomGroundLoot(bot.group.position.x + 0.6, bot.group.position.z + 0.4, {
+      kind: "weapon", id: old, name: wd.name, ammoInMag: wd.mag, attachments: Object.assign({}, bot.weaponAtts[slot])
+    }, bot.group.position.y);
+    bot.weapons[slot] = it.id;
+    bot.weaponAtts[slot] = Object.assign({}, it.attachments || {});
+    bot.mags[slot] = botMagSize(bot, slot);
+    botSetActiveSlot(bot, slot);
+    bot.swapUntil = now + 700;
+  } else if (it.kind === "weapon") {
     botGiveWeapon(bot, it.id, it.attachments);
   } else if (it.kind === "gear") {
     if (it.sub === "helm") bot.helmLv = it.lv;
@@ -116,6 +156,7 @@ function botPickupLoot(bot, entry, now) {
     bot.meds = Math.min(BOT_MED_CAP[bot.bagLv], bot.meds + (it.count || 1));
   } else if (it.kind === "attachment") {
     bot.weaponAtts[botAttachmentTargetSlot(bot, it)][it.slot] = it.id;
+    botRefreshGunLook(bot);
   } else if (it.kind === "throwable") {
     bot.frags += it.count || 1;
   }
@@ -123,10 +164,32 @@ function botPickupLoot(bot, entry, now) {
   bot.pauseUntil = now + 300 + Math.random() * 500; // 捡东西的短暂停顿
 }
 
+// 抢空投：每 1.5~2.5 秒看一次附近有没有空投（还在降落的也算，提前往烟那边跑）。
+// 每个 AI 的“贪心程度”不同：贪的人 500 米外也会冲过去，稳的人只捡离自己 160 米内的；
+// 空投在电网里、或者里面已经没有自己用得上的东西就不去
+function botPickAirdrop(bot, now) {
+  if (now < bot.nextAirdropCheck) return bot.airdropTarget;
+  bot.nextAirdropCheck = now + 1500 + Math.random() * 1000;
+  const bx = bot.group.position.x, bz = bot.group.position.z;
+  let best = null, bestD = Infinity;
+  for (let i = 0; i < airdrops.length; i++) {
+    const ad = airdrops[i];
+    if (!ad.landed && ad.crateGroup.position.y > ad.landY + 120) continue;
+    if (ad.landed && (!ad.lootEntries || !ad.lootEntries.some(e => !e.gone && botLootScore(bot, e.item) > 0))) continue;
+    if (Math.hypot(ad.x - zoneState.cx, ad.z - zoneState.cz) > zoneState.curR - 15) continue;
+    const d = Math.hypot(ad.x - bx, ad.z - bz);
+    if (d > 160 + 340 * bot.greed || d >= bestD) continue;
+    best = ad; bestD = d;
+  }
+  bot.airdropTarget = best;
+  return best;
+}
+
 // 命中率：随距离从近距值过渡到远距值；倍镜提升远距离命中、枪口/握把更稳；玩家蹲/趴更难被打中
 function botHitChance(bot, prof, dist) {
   let p = prof.hitNear + (prof.hitFar - prof.hitNear) * smoothstep(prof.nearR, prof.farR, dist);
   const atts = bot.weaponAtts[bot.activeSlot];
+  p *= botAimFactor(bot, dist);
   if (atts.scope && dist > 40) p *= 1.3;
   if (atts.muzzle) p *= 1.08;
   if (atts.grip) p *= 1.08;
@@ -177,6 +240,16 @@ function botAfterShots(bot, shots, dist, now) {
   }
 }
 
+// 枪口世界坐标（枪模前端，随开镜姿势、身体俯仰一起动）
+function botMuzzlePosition(bot, out) {
+  bot.botGunMesh.updateWorldMatrix(true, false);
+  return out.set(0, 0, 0.36).applyMatrix4(bot.botGunMesh.matrixWorld);
+}
+// AI 开枪的枪口火光（远处看得到谁在开枪）
+function spawnBotMuzzleFlash(bot) {
+  spawnFx({ pos: botMuzzlePosition(bot, new THREE.Vector3()), color: 0xffc76a, s0: 0.35, s1: 0.75, a0: 1, a1: 0, life: 0.06, additive: true });
+}
+
 // 向玩家打一轮连发：每发按射速间隔播放枪声并独立判定命中
 function botFireAtPlayer(bot, dist, now) {
   const wData = WEAPONS_DATA[bot.weaponKey];
@@ -191,8 +264,9 @@ function botFireAtPlayer(bot, dist, now) {
       const d = bot.group.position.distanceTo(playerRig.position);
       sfx.playShot(isSupp, 1.0, d, stereoPanFor(bot.group.position.x, bot.group.position.z));
       registerRadarSound("shot", bot.group.position.x, bot.group.position.z, isSupp);
+      if (!isSupp && d < 260) spawnBotMuzzleFlash(bot);
       const hit = Math.random() < hitP;
-      replayBotShot(bot, playerRig.position.x, playerRig.position.y - 0.45, playerRig.position.z, hit);
+      replayBotShot(bot, playerRig.position.x, player.feetY + player.eyeH * 0.72, playerRig.position.z, hit);
       if (hit) damagePlayer(botShotDamage(wData, prof, d), bot.name, wData.name);
     }, s * gap);
   }
@@ -293,6 +367,7 @@ function updateAIBot(bot, dt, now, elapsed) {
     let moveGoal = bot.targetPos;
     let moveSpd = isInBlueZone ? 6.3 : 5.0;
     let moveMode = "patrol";
+    let adTarget = null;
 
     // 0. 躲手雷 / 逃离火海（最高优先级）；被震爆弹闪到时原地踉跄
     if (fleeing) {
@@ -393,8 +468,15 @@ function updateAIBot(bot, dt, now, elapsed) {
       } else if (elapsed > bot.landedAt + 22) {
         botGiveWeapon(bot, "ump45", {});
       }
+    } else if (!isAlerted && bot.hp > 45 && (adTarget = botPickAirdrop(bot, now)) &&
+               Math.hypot(adTarget.x - bot.group.position.x, adTarget.z - bot.group.position.z) > 14) {
+      // 5. 抢空投：冲刺跑向空投（到 14 米内交给下面的搜刮逻辑去捡箱子周围的物资）
+      moveMode = "airdrop";
+      if (!bot.lootTarget && Math.hypot(adTarget.x - bot.group.position.x, adTarget.z - bot.group.position.z) < 34) bot.nextLootScan = 0;
+      moveGoal = new THREE.Vector3(adTarget.x + Math.sin(bot.wanderPhase) * 3, adTarget.landY, adTarget.z + Math.cos(bot.wanderPhase) * 3);
+      moveSpd = 6.1;
     } else if (bot.lootTarget && !bot.lootTarget.gone && !isAlerted) {
-      // 5. 已有枪：继续搜第二把枪 / 头盔 / 防弹衣 / 背包 / 药 / 配件
+      // 6. 已有枪：继续搜第二把枪 / 头盔 / 防弹衣 / 背包 / 药 / 配件
       moveMode = "loot";
       const lt = bot.lootTarget;
       moveGoal = new THREE.Vector3(lt.x, lt.y, lt.z);
@@ -404,7 +486,7 @@ function updateAIBot(bot, dt, now, elapsed) {
         bot.nextLootScan = now + 250;
       }
     } else if (bot.group.position.distanceTo(bot.targetPos) < 4.5) {
-      // 6. 巡逻漫游：优先挑选安全区内的其它房区门口巡逻
+      // 7. 巡逻漫游：优先挑选安全区内的其它房区门口巡逻
       const safeHouses = buildingFootprints.filter(b => Math.hypot(b.cx - zoneState.cx, b.cz - zoneState.cz) < zoneState.targetR);
       if (safeHouses.length > 0 && Math.random() < 0.65) {
         const h = safeHouses[Math.floor(Math.random() * safeHouses.length)];
@@ -422,6 +504,22 @@ function updateAIBot(bot, dt, now, elapsed) {
     }
 
     if (moveMode === "patrol" && now < bot.pauseUntil) moveSpd = 0;
+
+    // 开镜瞄准：交火时按倍镜举枪开镜（红点约 0.2 秒、8 倍镜约 0.45 秒），瞄好了才开第一枪；
+    // 开镜移动变慢、命中率明显提高；贴脸（喷子 18 米、其它枪 10 米内）直接腰射。和别的 AI 对枪时同样开镜
+    const wTypeNow = bot.weaponKey ? WEAPONS_DATA[bot.weaponKey].type : null;
+    const reloadingNow = now < bot.reloadUntil || now < bot.swapUntil || bot.healUntil > 0 || stunned;
+    const hipRange = wTypeNow === "SG" ? 18 : 10;
+    const fightingBot = now < bot.foeUntil;
+    const wantADS = !!bot.weaponKey && !reloadingNow && ((moveMode === "combat" && distToPlayer > hipRange) || fightingBot);
+    bot.adsBlend = wantADS ? Math.min(1, bot.adsBlend + dt / botAdsTime(bot)) : Math.max(0, bot.adsBlend - dt / 0.16);
+    bot.aimSettle = wantADS && bot.adsBlend >= 1 ? Math.min(1, bot.aimSettle + dt / 1.2) : 0;
+    if (bot.adsBlend > 0) moveSpd *= 1 - 0.45 * bot.adsBlend;
+    const aimInDone = !(moveMode === "combat" && distToPlayer > hipRange) || bot.adsBlend >= 0.9;
+    // 枪口上下对准目标（目标站 / 蹲 / 趴的高度不同，楼上楼下也能对准）
+    if (moveMode === "combat") bot.aimPitch = Math.atan2(player.feetY + player.eyeH * 0.72 - (bot.group.position.y + 1.55), Math.max(1, distToPlayer));
+    else if (fightingBot) bot.aimPitch = Math.atan2(bot.foeY + 1.2 - (bot.group.position.y + 1.55), Math.max(1, bot.foeDist));
+    else bot.aimPitch *= Math.max(0, 1 - dt * 6);
     bot.wanderAmp = moveMode === "patrol" ? 0.26 : (moveMode === "zone" ? 0.14 : (moveMode === "loot" ? 0.08 : 0));
 
     // 执行 7向触须避障 + 房门导航移动（带转向/加减速惯性与个体速度差异）
@@ -457,7 +555,7 @@ function updateAIBot(bot, dt, now, elapsed) {
     }
     turnBotTowardYaw(bot, faceYaw, turnRate * dt);
     const busy = now < bot.reloadUntil || now < bot.swapUntil || bot.healUntil > 0 || stunned;
-    animateBotBody(bot, dt, !!bot.weaponKey && isAlerted && !busy, distToPlayer, now);
+    animateBotBody(bot, dt, !!bot.weaponKey && (isAlerted || fightingBot) && !busy, distToPlayer, now);
 
     // AI 射击与反击逻辑：按手中武器的射速 / 射程 / 伤害开火；换弹、切枪、打药期间不能开火
     if (bot.weaponKey && !busy) {
@@ -469,7 +567,9 @@ function updateAIBot(bot, dt, now, elapsed) {
         const engageRange = isAlerted ? prof.maxRange : Math.min(prof.maxRange, (wType === "SR" || wType === "DMR") ? 110 : 78);
         const engageChance = isAlerted ? 0.88 : 0.42;
 
-        if (player.phase === "ground" && distToPlayer < engageRange && Math.random() < engageChance && canSeePlayer) {
+        if (player.phase === "ground" && distToPlayer < engageRange && canSeePlayer && !aimInDone) {
+          // 正在举枪开镜：瞄好再打（这一下不会去打别人）
+        } else if (player.phase === "ground" && distToPlayer < engageRange && Math.random() < engageChance && canSeePlayer) {
           bot.lastFireTime = now;
           bot.alertUntil = Math.max(bot.alertUntil, now + 6000);
           setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 700);
@@ -489,6 +589,10 @@ function updateAIBot(bot, dt, now, elapsed) {
           if (otherBot && Math.random() < 0.32) {
             bot.lastFireTime = now;
             setBotFaceHint(bot, otherBot.group.position.x, otherBot.group.position.z, 900);
+            bot.foeUntil = now + 2500;
+            bot.foeY = otherBot.group.position.y;
+            bot.foeDist = otherBot.group.position.distanceTo(bot.group.position);
+            if (distToPlayer < 260 && bot.weaponAtts[bot.activeSlot].muzzle !== "supp") spawnBotMuzzleFlash(bot);
             sfx.playShot(bot.weaponAtts[bot.activeSlot].muzzle === "supp", 1.0, distToPlayer, stereoPanFor(bot.group.position.x, bot.group.position.z));
             registerRadarSound("shot", bot.group.position.x, bot.group.position.z, false);
             // AI 互殴：伤害随武器类型变化，并扣除对方防弹衣减伤

@@ -215,8 +215,12 @@ function createAIBot(id) {
     swapUntil: 0,
     nextWeaponEval: 0,
     healUntil: 0,
-    frags: 0,
+    nades: { frag: 0, smoke: 0, stun: 0, molotov: 0 }, // 投掷物
     nextGrenadeTime: 0,
+    throwAnimUntil: 0,
+    pushUntil: 0,      // 闪完冲楼
+    lkp: null,         // 最后一次看到 / 听到玩家的位置
+    foe: null,         // 正在对枪的另一个 AI
     stunnedUntil: 0,
     fleeX: 0, fleeZ: 0, fleeUntil: 0,
     stepAccum: 0,

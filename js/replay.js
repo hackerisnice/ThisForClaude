@@ -4,7 +4,10 @@
 
 const REC_HZ = 20, REC_SECONDS = 16;
 const REC_CAP = REC_HZ * REC_SECONDS;
-const RB_STRIDE = 25;   // 每个 AI 每帧记录的数值个数
+const RB_STRIDE = 29;   // 每个 AI 每帧记录的数值个数
+// AI 手里的枪 / 倍镜按编号记录（回放击杀者第一人称时还原它的开镜画面）
+const REPLAY_WEAPON_KEYS = Object.keys(WEAPONS_DATA);
+const REPLAY_SCOPE_KEYS = Object.keys(ATTACHMENTS_DATA).filter(k => ATTACHMENTS_DATA[k].slot === "scope");
 const RP_STRIDE = 15;   // 玩家每帧记录的数值个数
 const REC_BOTS = aiPlayers.length;
 const STANCE_CODE = { stand: 0, crouch: 1, prone: 2 };
@@ -46,6 +49,11 @@ function writeBotState(bot, A, o) {
   A[o + 19] = bot.botGunMesh.rotation.x;
   A[o + 20] = bot.vestLv; A[o + 21] = bot.helmLv; A[o + 22] = bot.bagLv; A[o + 23] = bot.alive ? 1 : 0;
   A[o + 24] = bot.head.rotation.z; // 开镜歪头贴腮
+  A[o + 25] = bot.aimPitch || 0;
+  A[o + 26] = bot.adsBlend || 0;
+  A[o + 27] = bot.weaponKey ? REPLAY_WEAPON_KEYS.indexOf(bot.weaponKey) : -1;
+  const sc = bot.weaponKey && bot.weaponAtts[bot.activeSlot].scope;
+  A[o + 28] = sc ? REPLAY_SCOPE_KEYS.indexOf(sc) : -1;
 }
 function writePlayerState(A, o) {
   A[o] = playerRig.position.x; A[o + 1] = player.feetY; A[o + 2] = playerRig.position.z;
@@ -376,7 +384,10 @@ function entityAt(clip, id, t, out = _rpE) {
   out.x = A[oa + 1] + (A[ob + 1] - A[oa + 1]) * al; out.y = A[oa + 2] + (A[ob + 2] - A[oa + 2]) * al; out.z = A[oa + 3] + (A[ob + 3] - A[oa + 3]) * al;
   const yw = lerpAngle(A[oa + 4], A[ob + 4], al);
   out.fx = Math.sin(yw); out.fz = Math.cos(yw);
-  out.pitch = 0; out.eye = 1.65;
+  out.pitch = A[oa + 25] + (A[ob + 25] - A[oa + 25]) * al;
+  out.ads = A[oa + 26] + (A[ob + 26] - A[oa + 26]) * al;
+  out.wep = A[oa + 27]; out.scope = A[oa + 28];
+  out.eye = 1.78;
   return out;
 }
 
@@ -544,16 +555,41 @@ function updateReplayTracers(t) {
 const rpCam = new THREE.Vector3(), rpLook = new THREE.Vector3();
 const _rpWant = new THREE.Vector3(), _rpWantLook = new THREE.Vector3();
 const _rpA = { x: 0, y: 0, z: 0, fx: 0, fz: 1, eye: 1.7, pitch: 0 }, _rpB = { x: 0, y: 0, z: 0, fx: 0, fz: 1, eye: 1.7, pitch: 0 };
-const RP_MODE_LABEL = { killer: "击杀者视角", victim: "被淘汰者视角", me3: "我的第三人称", fp: "我的第一人称", orbit: "环绕镜头" };
+const RP_MODE_LABEL = { killer: "击杀者视角", victim: "被淘汰者视角", otherfp: "击杀者第一人称", me3: "我的第三人称", fp: "我的第一人称", orbit: "环绕镜头" };
+function replayModeLabel(mode) {
+  if (mode === "otherfp") return replayState.clip && replayState.clip.kind === "kill" ? "被淘汰者第一人称" : "击杀者第一人称";
+  return RP_MODE_LABEL[mode];
+}
 function replayModesFor(clip) {
   const m = [];
   if (clip.kind === "death") {
-    if (clip.killer !== null) m.push("killer");
+    if (clip.killer !== null) m.push("killer", "otherfp");
     m.push("me3", "fp", "orbit");
   } else {
-    m.push("me3", "fp", "victim", "orbit");
+    m.push("me3", "fp", "victim", "otherfp", "orbit");
   }
   return m;
+}
+// AI 第一人称：开镜时按它的倍镜缩放视野，并叠加它那把枪的倍镜 / 机瞄画面
+const rpScopeEl = document.getElementById("rp-scope");
+const rpScopeSvg = document.getElementById("rp-scope-svg");
+const rpCrossEl = document.getElementById("rp-cross");
+let rpScopeKey = "";
+function updateReplayScope(ent, show) {
+  const ads = show ? smoothstep(0, 1, ent.ads || 0) : 0;
+  const wKey = show && ent.wep >= 0 ? REPLAY_WEAPON_KEYS[ent.wep] : null;
+  const sKey = show && ent.scope >= 0 ? REPLAY_SCOPE_KEYS[ent.scope] : "iron";
+  const fovAds = sKey === "iron" ? 65 : ATTACHMENTS_DATA[sKey].fov;
+  const fov = show ? 70 + (fovAds - 70) * ads : 70;
+  if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
+  const overlay = wKey ? smoothstep(0.55, 1, ads) : 0;
+  if (wKey && overlay > 0) {
+    const key = wKey + "|" + sKey;
+    if (key !== rpScopeKey) { rpScopeKey = key; rpScopeSvg.innerHTML = buildScopeOrIronSightSVG({ id: wKey }, sKey); }
+  }
+  rpScopeEl.style.opacity = overlay.toFixed(2);
+  rpScopeEl.style.display = overlay > 0 ? "block" : "none";
+  rpCrossEl.style.display = show && overlay < 0.3 ? "block" : "none";
 }
 // 镜头被墙挡住时往目标方向拉近
 function pullCameraClear(fromX, fromY, fromZ, v) {
@@ -590,6 +626,12 @@ function computeReplayCamera(clip, t, dt) {
     _rpWant.set(me.x, me.y + me.eye, me.z);
     _rpWantLook.set(me.x + me.fx * Math.cos(me.pitch) * 20, me.y + me.eye + Math.sin(me.pitch) * 20, me.z + me.fz * Math.cos(me.pitch) * 20);
     snap = true;
+  } else if (mode === "otherfp" && other) {
+    // 对手的眼睛：沿它记录下来的朝向与枪口俯仰看出去
+    const cp = Math.cos(other.pitch);
+    _rpWant.set(other.x + other.fx * 0.12, other.y + other.eye, other.z + other.fz * 0.12);
+    _rpWantLook.set(_rpWant.x + other.fx * cp * 30, _rpWant.y + Math.sin(other.pitch) * 30, _rpWant.z + other.fz * cp * 30);
+    snap = true;
   } else if (mode === "killer" && other) {
     shoulderCam(other, me, _rpWant, _rpWantLook);
   } else if (mode === "victim" && other) {
@@ -621,10 +663,17 @@ function computeReplayCamera(clip, t, dt) {
   camera.position.set(0, 0, 0);
   camera.rotation.order = "YXZ";
   camera.rotation.set(pitch, yaw, 0);
+  // 第一人称：藏起自己的身体（不然镜头在脑袋里、枪挡在眼前），按开镜状态缩放视野
+  if (mode === "otherfp" && other) aiPlayers[otherId].group.visible = false;
+  updateReplayScope(other || me, mode === "otherfp" && !!other);
+  if (mode === "fp") rpCrossEl.style.display = "block";
 
-  // 名字标签：我 + 对手
+  // 名字标签：我 + 对手（开镜缩放视野时同比缩小，保持屏幕上大小不变）
+  const tagK = Math.tan(camera.fov * Math.PI / 360) / Math.tan(35 * Math.PI / 180);
+  rpTagA.scale.set(0.4 * tagK, 0.08 * tagK, 1);
+  rpTagB.scale.set(0.4 * tagK, 0.08 * tagK, 1);
   const setTag = (sp, ent, text, color) => {
-    if (!ent || mode === "fp" && sp === rpTagA) { sp.visible = false; return; }
+    if (!ent || (mode === "fp" && sp === rpTagA) || (mode === "otherfp" && sp === rpTagB)) { sp.visible = false; return; }
     setTagText(sp, text, color);
     sp.position.set(ent.x, ent.y + 2.45, ent.z);
     sp.visible = true;
@@ -704,6 +753,8 @@ function exitReplay() {
   playerRig.position.copy(sv.rig);
   camera.fov = sv.fov;
   camera.updateProjectionMatrix();
+  rpScopeEl.style.display = "none";
+  rpCrossEl.style.display = "none";
   document.body.classList.remove("replay-mode");
   rpUI.style.display = "none";
   document.getElementById("gameover-modal").style.display = "flex";
@@ -714,7 +765,7 @@ function updateReplayButtons() {
   const S = replayState;
   rpPlayBtn.innerText = S.paused ? "▶" : "⏸";
   rpSpeedBtn.innerText = S.speed === 1 ? "1x" : "0.5x";
-  rpCamBtn.innerText = `🎥 ${RP_MODE_LABEL[S.mode]}`;
+  rpCamBtn.innerText = `🎥 ${replayModeLabel(S.mode)}`;
 }
 
 // 主循环在回放期间每帧调用（战场模拟暂停）

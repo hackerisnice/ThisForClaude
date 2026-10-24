@@ -300,19 +300,47 @@ function updateFire(dt, now) {
   }
 }
 
-// AI 投雷：按抛物线精确计算出手速度，丢到玩家位置附近（带随机误差），引信约在落地后 1 秒爆炸
-function botThrowGrenade(bot) {
+// ---------------------------------------------------------------------------
+// AI 投掷：出手前先“在脑子里”模拟一遍抛物线（正常 / 高抛 / 低平三种出手），
+// 确认会落到目标附近、不会撞墙弹回自己脚下才扔。手雷捏一下让它落地约 1 秒后炸，震爆弹落地就炸
+// ---------------------------------------------------------------------------
+function botPlanThrow(bot, id, tx, ty, tz) {
   const pos = bot.group.position;
-  const tx = playerRig.position.x + (Math.random() - 0.5) * 5, tz = playerRig.position.z + (Math.random() - 0.5) * 5;
-  const ty = player.feetY + 0.1;
-  const origin = new THREE.Vector3(pos.x, pos.y + 1.7, pos.z);
+  const origin = new THREE.Vector3(pos.x, pos.y + 1.75, pos.z);
   const d = Math.hypot(tx - origin.x, tz - origin.z);
-  const T = Math.max(0.8, Math.min(1.9, d / 13));
-  const vel = new THREE.Vector3((tx - origin.x) / T, (ty - origin.y + 0.5 * THROW_GRAVITY * T * T) / T, (tz - origin.z) / T);
-  bot.frags--;
+  const p = new THREE.Vector3(), v = new THREE.Vector3();
+  for (const k of [1, 1.45, 0.72]) {
+    const T = Math.max(0.55, Math.min(2.4, d / 13 * k));
+    const vel = new THREE.Vector3((tx - origin.x) / T, (ty - origin.y + 0.5 * THROW_GRAVITY * T * T) / T, (tz - origin.z) / T);
+    if (vel.length() > 23) continue;
+    p.copy(origin); v.copy(vel);
+    let t = 0, hitEarly = false;
+    const simT = id === "molotov" ? T + 0.6 : T + 0.9;
+    while (t < simT) {
+      const imp = throwPhysicsStep(p, v, 1 / 30);
+      t += 1 / 30;
+      if (imp && t < T * 0.7) { hitEarly = true; break; } // 出手没多远就撞上墙 / 窗框
+      if (imp && id === "molotov") break;
+    }
+    if (hitEarly) continue;
+    const miss = Math.hypot(p.x - tx, p.z - tz), self = Math.hypot(p.x - pos.x, p.z - pos.z);
+    if (miss < 5 && Math.abs(p.y - ty) < 2.5 && self > (id === "smoke" ? 2.5 : 7)) return { origin, vel, T };
+  }
+  return null;
+}
+// 真正扔出去（扔不过去返回 false）：转身、抬手甩臂，近处能听到拉环声
+function botThrowNade(bot, id, tx, ty, tz) {
+  const plan = botPlanThrow(bot, id, tx, ty, tz);
+  if (!plan) return false;
+  bot.nades[id]--;
   setBotFaceHint(bot, tx, tz, 900);
-  sfx.playThrow();
-  spawnThrowable("frag", origin, vel, bot.name, false, T + 1.1);
+  bot.throwAnimUntil = performance.now() + 520;
+  const d = playerRig.position.distanceTo(bot.group.position);
+  if (d < 25) sfx.playPinPull();
+  if (d < 45) sfx.playThrow();
+  const fuse = id === "frag" ? plan.T + 1.0 : (id === "stun" ? plan.T + 0.25 : undefined);
+  spawnThrowable(id, plan.origin, plan.vel, bot.name, false, fuse);
+  return true;
 }
 
 // ---------------------------------------------------------------------------

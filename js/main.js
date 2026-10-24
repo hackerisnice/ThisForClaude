@@ -238,7 +238,8 @@ function animate() {
     }
   }
 
-  // AI 完整生命周期（逐帧逻辑见 updateAIBot）
+  // AI 完整生命周期（逐帧逻辑见 updateAIBot）；绕路寻路每帧最多算一次
+  navSearchesThisFrame = 0;
   aiPlayers.forEach(bot => updateAIBot(bot, dt, now, elapsed));
 
   // 毒圈平滑缩圈

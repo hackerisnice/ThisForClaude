@@ -318,6 +318,7 @@ body.replay-mode > *:not(#canvas-container):not(#replay-ui):not(#portrait-warn):
   flex-direction: column; justify-content: space-between; align-items: stretch;
 }
 #replay-top {
+  position: relative; z-index: 2;
   align-self: center; margin-top: 8px; max-width: calc(100vw - 24px);
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
   background: rgba(8, 10, 14, 0.72); border: 1px solid rgba(255, 165, 0, 0.7); border-radius: 6px;
@@ -332,6 +333,7 @@ body.replay-mode > *:not(#canvas-container):not(#replay-ui):not(#portrait-warn):
   text-shadow: 0 1px 4px #000; opacity: 0; transition: opacity 0.2s;
 }
 #replay-bottom {
+  position: relative; z-index: 2;
   pointer-events: auto; margin: 0 12px 10px; display: flex; align-items: center; gap: 6px;
   background: rgba(10, 12, 16, 0.84); border: 1px solid rgba(255, 165, 0, 0.5); border-radius: 8px; padding: 5px 8px;
 }
@@ -373,3 +375,10 @@ body.replay-mode > *:not(#canvas-container):not(#replay-ui):not(#portrait-warn):
 }
 #btn-throw-cancel small { font-size: 8px; margin-top: 2px; }
 #btn-throw-cancel.armed { background: rgba(230, 40, 25, 0.9); opacity: 1; transform: scale(calc(var(--btn-scale) * 1.12)); }
+/* 回放第一人称：对手的倍镜画面与准星 */
+#rp-scope { display: none; position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+#rp-scope-svg { width: 100vw; height: 100vh; display: block; }
+#rp-cross {
+  display: none; position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
+  border-radius: 50%; background: #ff3b30; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.6); pointer-events: none;
+}

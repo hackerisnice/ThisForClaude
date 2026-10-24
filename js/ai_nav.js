@@ -111,15 +111,17 @@ function setBotFaceHint(bot, x, z, holdMs) {
 
 // 7向触须前瞻避障移动：彻底根除 AI 撞墙卡死
 const WHISKER_ANGLES = [0, 0.45, -0.45, 0.92, -0.92, 1.45, -1.45, 2.2, -2.2];
-function steerAndMoveAI(bot, desiredTarget, speed, dt) {
+function steerAndMoveAI(bot, desiredTarget, speed, dt, allowPlan = true) {
   const pos = bot.group.position;
   const subGoal = computeAINavSubTarget(pos, desiredTarget);
-  let desiredAngle = Math.atan2(subGoal.x - pos.x, subGoal.z - pos.z);
+  // 直走走不通时改走 A* 绕行路线的下一个路点（见 pathfind.js）
+  const steerTo = botNavSteerPoint(bot, subGoal, desiredTarget, speed, dt, allowPlan);
+  let desiredAngle = Math.atan2(steerTo.x - pos.x, steerTo.z - pos.z);
 
   // 拟人化：远离子目标时叠加缓慢的蛇形偏移，不再像机器人一样走绝对直线
-  // （接近门口/目标 6 米内自动收敛为直线，保证进门与拾取精度）
-  const distToSub = Math.hypot(subGoal.x - pos.x, subGoal.z - pos.z);
-  if (bot.wanderAmp > 0 && distToSub > 6) {
+  // （接近门口/目标 6 米内、或正在按绕行路线走时收敛为直线，保证进门与拾取精度）
+  const distToSub = Math.hypot(steerTo.x - pos.x, steerTo.z - pos.z);
+  if (bot.wanderAmp > 0 && distToSub > 6 && !bot.navPath) {
     const fade = Math.min(1, (distToSub - 6) / 10);
     desiredAngle += Math.sin(performance.now() * 0.001 * bot.wanderFreq + bot.wanderPhase) * bot.wanderAmp * fade;
   }
@@ -165,9 +167,15 @@ function steerAndMoveAI(bot, desiredTarget, speed, dt) {
     // 按时间累计卡住（约等于原版 60 帧下的 10 帧），低帧率手机上表现一致
     bot.stuckTime += dt;
     if (bot.stuckTime > 0.18) {
-      // 连续受阻时切换新的脱困目标点
-      const escapeAngle = bot.moveHeading + (Math.random() < 0.5 ? 1.8 : -1.8);
-      bot.targetPos.set(pos.x + Math.sin(escapeAngle) * 18, 0, pos.z + Math.cos(escapeAngle) * 18);
+      if (pos.y < 1 && bot.navCooldown <= 0) {
+        // 卡住了：在地面上就重新算一条绕行路线
+        bot.navPath = null;
+        bot.navWant = true;
+      } else {
+        // 楼上 / 刚算过路线还是卡住：切换新的脱困目标点（巡逻时生效）
+        const escapeAngle = bot.moveHeading + (Math.random() < 0.5 ? 1.8 : -1.8);
+        bot.targetPos.set(pos.x + Math.sin(escapeAngle) * 18, 0, pos.z + Math.cos(escapeAngle) * 18);
+      }
       bot.stuckTime = 0;
     }
   } else {
@@ -223,6 +231,12 @@ function animateBotBody(bot, dt, aiming, distToPlayer, now) {
     bot.armLPivot.rotation.set(-0.9, 0.5, 0);
     bot.armRPivot.rotation.set(-0.9, -0.5, 0);
   }
+  // 投掷动作：右手先抬到脑后蓄力，再向前甩出
+  if (now < bot.throwAnimUntil) {
+    const ph = 1 - (bot.throwAnimUntil - now) / 520;
+    bot.armRPivot.rotation.set(ph < 0.45 ? -1.2 - 1.9 * (ph / 0.45) : -3.1 + 2.6 * smoothstep(0.45, 1, ph), -0.15, 0.1);
+    bot.upper.rotation.y = ph < 0.45 ? 0.25 * (ph / 0.45) : 0.25 - 0.5 * smoothstep(0.45, 1, ph);
+  }
 
   // 装备外观随 AI 实际捡到的等级变化（防弹衣/头盔颜色 = 等级，背包大小 = 等级）
   bot.vestMesh.visible = bot.vestLv > 0;
@@ -256,6 +270,10 @@ function alertNearbyAIsOnPlayerShot(isSuppressed) {
     const d = bot.group.position.distanceTo(playerRig.position);
     if (d <= hearRadius) {
       bot.alertUntil = now + 9500;
+      // 听声辨位：记下大概位置（有几米误差），玩家躲起来时往这里扔投掷物
+      if (!bot.lkp) bot.lkp = { x: 0, y: 0, z: 0, t: 0 };
+      bot.lkp.x = playerRig.position.x + (Math.random() - 0.5) * 6; bot.lkp.y = player.feetY;
+      bot.lkp.z = playerRig.position.z + (Math.random() - 0.5) * 6; bot.lkp.t = now;
       bot.targetPos.set(
         playerRig.position.x + (Math.random() - 0.5) * 10,
         0,

@@ -154,6 +154,8 @@ function fireCurrentWeapon() {
   player.consecutiveShots++;
   sfx.playShot(st.isSupp, base.dmg ? base.dmg / 42 : 1.5, 0);
 
+  player.lastFiredAt = now;
+  player.lastFiredSupp = st.isSupp;
   alertNearbyAIsOnPlayerShot(st.isSupp);
 
   if (muzzleFlashMesh && !st.isSupp) {
@@ -163,9 +165,8 @@ function fireCurrentWeapon() {
   fpGunGroup.position.z = -0.38;
 
   const pelletCount = base.type === "SG" ? base.pellets : 1;
-  let anyHeadshot = false;
-  let anyHit = false;
-
+  // 子弹不再瞬间命中：沿准星方向（加上散布与 100 米归零的微小上扬）发射真实弹头，飞到了才结算伤害（见 ballistics.js）
+  const zeroAng = bulletZeroAngle(wep.id);
   for (let p = 0; p < pelletCount; p++) {
     let offsetX = 0, offsetY = 0;
     if (base.type === "SG") {
@@ -177,50 +178,11 @@ function fireCurrentWeapon() {
       offsetX = (Math.random() - 0.5) * 0.028;
       offsetY = (Math.random() - 0.5) * 0.028;
     }
-
     raycaster.setFromCamera(new THREE.Vector2(offsetX, offsetY), camera);
-    raycaster.far = 850;
-    const hits = raycaster.intersectObjects(gatherShootCandidates(raycaster.ray, 850), false);
-    if (p < 3) {
-      // 录像：子弹轨迹（从枪口略下方出发，打到命中点或 300 米外）
-      const ro = raycaster.ray.origin, rd = raycaster.ray.direction;
-      const end = hits.length ? hits[0].point : ro.clone().addScaledVector(rd, 300);
-      const impact = !hits.length ? 0 : (hits[0].object.userData && hits[0].object.userData.isAI ? 1 : 2);
-      replayShotEvent(-1, ro.x + rd.x * 0.6, ro.y - 0.2 + rd.y * 0.6, ro.z + rd.z * 0.6, [end.x, end.y, end.z], [impact]);
-    }
-
-    if (hits.length > 0) {
-      const hit = hits[0];
-      if (hit.object.userData && hit.object.userData.isAI) {
-        const bot = hit.object.userData.bot;
-        if (bot.alive) {
-          anyHit = true;
-          const isHead = hit.object.userData.isHead;
-          if (isHead) anyHeadshot = true;
-          const rawDmg = base.type === "SG" ? base.dmgPerPellet : base.dmg;
-          // 爆头按 AI 头盔等级减伤，打身体按防弹衣等级减伤
-          const finalDmg = Math.round(rawDmg * (isHead ? 2.35 : 1.0) * (1 - botArmorReduction(bot, isHead)));
-          bot.hp -= finalDmg;
-          player.totalDmg += finalDmg;
-          spawnBloodEffect(hit.point);
-
-          bot.alertUntil = now + 12000;
-          bot.strafeDir = -bot.strafeDir;
-          setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 1500);
-
-          if (bot.hp <= 0 && bot.alive) {
-            killAIBot(bot, "你 (Player)", base.name, isHead, true);
-          }
-        }
-      } else {
-        addBulletHoleDecal(hit.point, hit.face.normal, base.type === "SG" ? 0.038 : 0.055);
-      }
-    }
-  }
-
-  if (anyHit) {
-    showHitMarker();
-    sfx.playHit(anyHeadshot);
+    const dir = raycaster.ray.direction.clone();
+    dir.y += zeroAng;
+    dir.normalize();
+    spawnBullet({ pos: raycaster.ray.origin.clone().addScaledVector(dir, 0.5), dir, wId: wep.id, owner: -1, info: { wId: wep.id } });
   }
 
   if (base.isBoltAction) {

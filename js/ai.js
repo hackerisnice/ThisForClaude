@@ -236,16 +236,83 @@ function botPickAirdrop(bot, now) {
 }
 
 // 命中率：随距离从近距值过渡到远距值；倍镜提升远距离命中、枪口/握把更稳；玩家蹲/趴更难被打中
-function botHitChance(bot, prof, dist) {
+// （geometric = true：子弹真实飞行时，蹲 / 趴的目标本来就更小，不再额外打折）
+function botHitChance(bot, prof, dist, geometric = false) {
   let p = prof.hitNear + (prof.hitFar - prof.hitNear) * smoothstep(prof.nearR, prof.farR, dist);
   const atts = bot.weaponAtts[bot.activeSlot];
   p *= botAimFactor(bot, dist);
   if (atts.scope && dist > 40) p *= 1.3;
   if (atts.muzzle) p *= 1.08;
   if (atts.grip) p *= 1.08;
-  if (player.stance === "crouch") p *= 0.9;
-  else if (player.stance === "prone") p *= 0.75;
+  if (!geometric && player.stance === "crouch") p *= 0.9;
+  else if (!geometric && player.stance === "prone") p *= 0.75;
+  // 超远距离（倍镜狙击）再打折：200 米外逐渐变难
+  p *= 1 - 0.4 * smoothstep(200, 420, dist);
   return p;
+}
+
+// 手上（或指定槽位）枪的倍镜倍率，没镜子为 1
+function botScopeZoom(bot, slot = bot.activeSlot) {
+  const sc = bot.weapons[slot] && bot.weaponAtts[slot].scope;
+  return sc && ATTACHMENTS_DATA[sc] ? ATTACHMENTS_DATA[sc].zoom : 1;
+}
+// 视野距离：肉眼 135 米；带了倍镜能看得更远（两把枪里倍率最高的那把）
+function botSightRange(bot) {
+  const z = Math.max(botScopeZoom(bot, 0), botScopeZoom(bot, 1));
+  return z >= 6 ? 380 : (z >= 4 ? 320 : (z >= 2 ? 220 : (z > 1 ? 160 : 135)));
+}
+// 最大交战距离：狙击 / 连狙挂高倍镜能打 300 米以上，步枪挂 3 倍以上能打 200 多米
+function botEngageRange(bot, prof, wType) {
+  const z = botScopeZoom(bot);
+  if (wType === "SR" || wType === "DMR") return z >= 6 ? 380 : (z >= 4 ? 340 : (z >= 2 ? 230 : 160));
+  if (wType === "AR" || wType === "LMG") return z >= 3 ? 230 : (z >= 2 ? 190 : prof.maxRange);
+  return prof.maxRange;
+}
+function botHasScopedLongGun(bot) {
+  for (let s = 0; s < 2; s++) {
+    const w = bot.weapons[s];
+    if (w && (WEAPONS_DATA[w].type === "SR" || WEAPONS_DATA[w].type === "DMR") && botScopeZoom(bot, s) >= 3) return true;
+  }
+  return false;
+}
+
+// 能不能看见玩家：135 米内有视线就立刻看见（原逻辑）；更远要靠倍镜，而且要先“发现”——
+// 面朝玩家那边时发现进度慢慢涨，玩家在跑动 / 站着 / 刚开过枪更容易被发现，趴着不动很难被发现
+const SPOT_STANCE = { stand: 1, crouch: 0.55, prone: 0.22 };
+function botCanSeePlayer(bot, d, now, dt) {
+  if (player.phase !== "ground") { bot.spot = 0; return false; }
+  const pos = bot.group.position;
+  const eye = 1.5 - 0.45 * bot.crouchBlend;
+  if (d < 135) {
+    let v = hasLineOfSight(pos, playerRig.position, eye, -0.2);
+    // 蹲着被矮掩体挡住、站起来就能看到：站起来探头
+    if (!v && bot.crouchBlend > 0.3 && hasLineOfSight(pos, playerRig.position, 1.5, -0.2)) bot.standUntil = now + 1500;
+    if (v) bot.spot = 1;
+    else bot.spot = Math.max(0, bot.spot - dt * 0.35);
+    return v;
+  }
+  if (d > botSightRange(bot)) { bot.spot = Math.max(0, bot.spot - dt * 0.35); return false; }
+  if (now >= bot.nextFarLOS) {
+    bot.nextFarLOS = now + 260 + Math.random() * 140;
+    bot.farLOS = hasLineOfSight(pos, playerRig.position, eye, -0.2);
+    if (!bot.farLOS && bot.crouchBlend > 0.3 && bot.spot > 0.5 && hasLineOfSight(pos, playerRig.position, 1.5, -0.2)) bot.standUntil = now + 1500;
+  }
+  if (!bot.farLOS) { bot.spot = Math.max(bot.spot >= 1 ? 0.6 : 0, bot.spot - dt * 0.35); return false; }
+  if (bot.spot >= 1) return true;
+  _botFwd.set(0, 0, 1).applyQuaternion(bot.group.quaternion);
+  const off = Math.abs(angleDiff(Math.atan2(playerRig.position.x - pos.x, playerRig.position.z - pos.z), Math.atan2(_botFwd.x, _botFwd.z)));
+  if (off > 1.3) return false; // 背对着看不到
+  const R = botSightRange(bot);
+  const moving = Math.hypot(playerVel.x, playerVel.z) > 1.2;
+  const fired = now - player.lastFiredAt < 1500 && !player.lastFiredSupp;
+  let rate = (moving ? 1.0 : 0.4) * (SPOT_STANCE[player.stance] || 1) * (fired ? 3 : 1) *
+    (1.6 - 0.9 * (d - 135) / Math.max(1, R - 135)) * (bot.adsBlend > 0.5 ? 1.5 : 1) * (off < 0.5 ? 1.3 : 1);
+  if (bot.lkp && now - bot.lkp.t < 8000 && Math.hypot(bot.lkp.x - playerRig.position.x, bot.lkp.z - playerRig.position.z) < 25) rate *= 2;
+  const before = bot.spot;
+  bot.spot = Math.min(1, bot.spot + dt * rate * 0.45);
+  // 余光瞥到远处有动静：转过去仔细看
+  if (before < 0.12 && bot.spot >= 0.12 && now > bot.faceHintUntil) setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 2500);
+  return bot.spot >= 1;
 }
 
 function botShotDamage(wData, prof, dist) {
@@ -300,27 +367,283 @@ function spawnBotMuzzleFlash(bot) {
   spawnFx({ pos: botMuzzlePosition(bot, new THREE.Vector3()), color: 0xffc76a, s0: 0.35, s1: 0.75, a0: 1, a1: 0, life: 0.06, additive: true });
 }
 
-// 向玩家打一轮连发：每发按射速间隔播放枪声并独立判定命中
+// AI 的瞄准方向：按玩家当前移动速度 × 子弹飞行时间给提前量、按下坠量抬枪（各自有技术误差），
+// 再加上由命中率换算出的瞄准散布（距离越远散布越大）。打不打得中由子弹真正飞到哪决定
+const BOT_HIT_R = 0.64; // 把命中率换算成散布时用的等效目标半径（米）
+function gaussRand() { return Math.sqrt(-2 * Math.log(Math.random() + 1e-9)) * Math.cos(Math.PI * 2 * Math.random()); }
+const _baU = new THREE.Vector3(), _baW = new THREE.Vector3();
+function botAimDirection(bot, muzzle, wId, hitP, dist, shotIdx) {
+  const v0 = bulletSpeedOf(wId), k = bulletDragOf(wId);
+  const tgt = new THREE.Vector3(playerRig.position.x, player.feetY + (player.stance === "prone" ? 0.3 : player.eyeH * 0.62), playerRig.position.z);
+  const d = muzzle.distanceTo(tgt);
+  let t = bulletFlightTime(d, v0, k);
+  if (!isFinite(t)) t = d / v0 * 1.6;
+  const lead = bot.leadSkill * (0.8 + Math.random() * 0.4);
+  tgt.x += playerVel.x * t * lead;
+  tgt.z += playerVel.z * t * lead;
+  tgt.y += bulletDropAt(t) * bot.dropSkill * (0.92 + Math.random() * 0.16);
+  const p = Math.max(0.01, Math.min(0.95, hitP));
+  // 150 米外散布随距离放大（倍率越高放大得越晚）
+  const farDiv = 150 * (1 + 0.14 * (botScopeZoom(bot) - 1));
+  const sigma = BOT_HIT_R / Math.sqrt(-2 * Math.log(1 - p)) * Math.max(1, dist / farDiv) * (1 + 0.12 * shotIdx);
+  const dir = tgt.clone().sub(muzzle).normalize();
+  _baU.set(-dir.z, 0, dir.x).normalize();
+  _baW.crossVectors(dir, _baU).normalize();
+  tgt.addScaledVector(_baU, gaussRand() * sigma).addScaledVector(_baW, gaussRand() * sigma);
+  return tgt.sub(muzzle).normalize();
+}
+
+// 枪声按声速传播：远处开枪，先听到子弹破空 / 打在身边，过一会儿才传来枪声
+function botShotSound(bot, isSupp, d) {
+  const x = bot.group.position.x, z = bot.group.position.z;
+  const play = () => {
+    if (replayState.active) return;
+    sfx.playShot(isSupp, 1.0, d, stereoPanFor(x, z));
+    registerRadarSound("shot", x, z, isSupp);
+  };
+  if (d > 60) setTimeout(play, d / 343 * 1000); else play();
+}
+
+// 向玩家打一轮连发：每发按射速间隔从枪口射出一颗真实弹头
 function botFireAtPlayer(bot, dist, now) {
   const wData = WEAPONS_DATA[bot.weaponKey];
   const prof = botProfile(bot);
   const shots = Math.max(1, Math.min(prof.volley, bot.mags[bot.activeSlot]));
-  const hitP = botHitChance(bot, prof, dist);
+  const hitP = botHitChance(bot, prof, dist, true);
   const isSupp = bot.weaponAtts[bot.activeSlot].muzzle === "supp";
   const gap = Math.max(50, 60000 / wData.rpm);
+  const wKey = bot.weaponKey;
   for (let s = 0; s < shots; s++) {
     setTimeout(() => {
-      if (!bot.alive || player.phase !== "ground") return;
+      if (!bot.alive || player.phase !== "ground" || bot.weaponKey !== wKey || replayState.active) return;
       const d = bot.group.position.distanceTo(playerRig.position);
-      sfx.playShot(isSupp, 1.0, d, stereoPanFor(bot.group.position.x, bot.group.position.z));
-      registerRadarSound("shot", bot.group.position.x, bot.group.position.z, isSupp);
-      if (!isSupp && d < 260) spawnBotMuzzleFlash(bot);
-      const hit = Math.random() < hitP;
-      replayBotShot(bot, playerRig.position.x, player.feetY + player.eyeH * 0.72, playerRig.position.z, hit);
-      if (hit) damagePlayer(botShotDamage(wData, prof, d), bot.name, wData.name);
+      botShotSound(bot, isSupp, d);
+      if (!isSupp && d < 320) spawnBotMuzzleFlash(bot);
+      const muzzle = botMuzzlePosition(bot, new THREE.Vector3());
+      spawnBullet({ pos: muzzle, dir: botAimDirection(bot, muzzle, wKey, hitP, d, s), wId: wKey, owner: bot,
+        info: { dmg: botShotDamage(wData, prof, d), botName: bot.name, wName: wData.name } });
     }, s * gap);
   }
   botAfterShots(bot, shots, dist, now);
+}
+
+// AI 获知玩家位置（看到 / 听到 / 被打中），距离越远、noiseK 越大，估计的位置误差越大
+function botLearnPlayerPos(bot, now, noiseK) {
+  const d = bot.group.position.distanceTo(playerRig.position);
+  const n = d * noiseK;
+  if (!bot.lkp) bot.lkp = { x: 0, y: 0, z: 0, t: 0 };
+  bot.lkp.x = playerRig.position.x + (Math.random() - 0.5) * 2 * n;
+  bot.lkp.y = player.feetY;
+  bot.lkp.z = playerRig.position.z + (Math.random() - 0.5) * 2 * n;
+  bot.lkp.t = now;
+}
+
+// ============================================================================
+// AI 战术：搜猎（主动去找玩家打）/ 阴人（听到人靠近就蹲下架好枪等着）/ 架点狙击（上高楼窗口远距离狙）
+// ============================================================================
+const overwatchClaims = new Set(); // 已经有人占了的狙击楼
+function botEndTactic(bot) {
+  if (bot.tactic === "overwatch" && bot.owSpot) overwatchClaims.delete(bot.owSpot.b);
+  bot.tactic = null;
+  bot.owSpot = null;
+  bot.huntSearchUntil = 0;
+  bot.huntSearchPt = null;
+  bot.huntFlankPt = null;
+}
+function botStartTactic(bot, kind, now, ms) {
+  botEndTactic(bot);
+  bot.tactic = kind;
+  bot.tacticSince = now;
+  bot.tacticUntil = now + ms;
+}
+function botStartHunt(bot, now) {
+  botStartTactic(bot, "hunt", now, 45000 + Math.random() * 20000);
+  bot.flankSide = Math.random() < 0.5 ? 1 : -1;
+}
+// 阴人：在楼里就盯着门口 / 楼梯口（人从哪进来），在外面就盯着声音方向；提前开好镜
+// （camp = 没有情报，只是蹲在房子里守着）
+function botStartAmbush(bot, now, inB, camp = false) {
+  botStartTactic(bot, "ambush", now, camp ? 20000 + Math.random() * 20000 : 15000 + Math.random() * 10000);
+  const pos = bot.group.position, L = camp ? null : bot.lkp;
+  const ref = L || (inB ? (Math.random() < 0.5 ? inB.northDoor : inB.southDoor) : { x: pos.x + Math.sin(bot.moveHeading) * 10, z: pos.z + Math.cos(bot.moveHeading) * 10 });
+  let fx = ref.x, fz = ref.z;
+  if (inB && getBuildingContainingPoint(ref.x, ref.z, 0.3) !== inB) {
+    const f = inB.stairs ? floorOfY(inB, pos.y) : 0;
+    if (f > 0 && !inB.stairs.catwalk) {
+      const e = stairHighExit(inB, f - 1);
+      fx = e.x; fz = e.z;
+    } else {
+      const dn = Math.hypot(ref.x - inB.northDoor.x, ref.z - inB.northDoor.z), ds = Math.hypot(ref.x - inB.southDoor.x, ref.z - inB.southDoor.z);
+      const door = dn < ds ? inB.northDoor : inB.southDoor;
+      fx = door.x; fz = door.z;
+    }
+  }
+  bot.ambushYaw = Math.atan2(fx - pos.x, fz - pos.z);
+  bot.alertUntil = Math.max(bot.alertUntil, bot.tacticUntil);
+  bot.lastFireTime = 0; // 人一露头立刻开枪
+}
+
+// 架点：楼顶层朝向圈中心那一面的窗口（窗外 40 米视野要开阔）
+function botWindowSpots(b, f) {
+  const y = floorY(f), out = [];
+  const ns = (b.w >= 13 ? [b.cx] : []).concat(b.w >= 12 ? [b.cx - b.w * 0.3, b.cx + b.w * 0.3] : (b.w >= 9 ? [b.cx - b.w * 0.28, b.cx + b.w * 0.28] : []));
+  const nWin = Math.max(1, Math.floor((b.d - 2) / 4.2)), ew = [];
+  for (let k = 0; k < nWin; k++) ew.push(b.cz - b.d / 2 + b.d * (k + 0.5) / nWin);
+  const st = b.stairs;
+  ns.forEach(x => {
+    out.push({ x, z: b.cz - b.d / 2 + 1.0, nx: 0, nz: -1 });
+    out.push({ x, z: b.cz + b.d / 2 - 1.0, nx: 0, nz: 1 });
+  });
+  ew.forEach(z => {
+    out.push({ x: b.cx + b.w / 2 - 1.0, z, nx: 1, nz: 0 });
+    if (z < st.zA - 1.2 || z > st.zB + 1.2) out.push({ x: b.cx - b.w / 2 + 1.0, z, nx: -1, nz: 0 });
+  });
+  return out.map(s => Object.assign(s, { y, f, b, yaw: Math.atan2(s.nx, s.nz) }));
+}
+function botFindOverwatchSpot(bot) {
+  const pos = bot.group.position;
+  let best = null, bestS = -Infinity;
+  for (let i = 0; i < buildingFootprints.length; i++) {
+    const b = buildingFootprints[i];
+    if (b.floors < 2 || !b.stairs || b.stairs.catwalk || overwatchClaims.has(b)) continue;
+    const dB = Math.hypot(b.cx - pos.x, b.cz - pos.z);
+    if (dB > 170 || Math.hypot(b.cx - zoneState.cx, b.cz - zoneState.cz) > zoneState.targetR - 12) continue;
+    const zx = zoneState.cx - b.cx, zz = zoneState.cz - b.cz, zl = Math.hypot(zx, zz) || 1;
+    const spots = botWindowSpots(b, b.floors - 1);
+    for (const s of spots) {
+      // 越朝向圈中心、离自己越近越好
+      const sc = (s.nx * zx + s.nz * zz) / zl - dB / 170 + Math.random() * 0.3;
+      if (sc <= bestS) continue;
+      // 窗边有家具就往里退一点
+      let ok = false;
+      for (const back of [0, 0.6, 1.2]) {
+        const x = s.x - s.nx * back, z = s.z - s.nz * back;
+        if (!isPointBlocked2D(x, z, 0.44, s.y)) { s.x = x; s.z = z; ok = true; break; }
+      }
+      if (!ok) continue;
+      const ey = s.y + 1.5;
+      if (!losSegmentClear(s.x, ey, s.z, s.x + s.nx * 40, ey - 2.5, s.z + s.nz * 40)) continue;
+      best = s; bestS = sc;
+    }
+  }
+  return best;
+}
+
+// 每 1~1.5 秒想一次接下来怎么打
+function botUpdateTactic(bot, now, elapsed, distToPlayer, canSeePlayer, isOutsideSafe, isInBlueZone) {
+  if (now < bot.nextTacticEval) return;
+  bot.nextTacticEval = now + 1000 + Math.random() * 500;
+  if (!bot.weaponKey || player.phase !== "ground") { if (bot.tactic) botEndTactic(bot); return; }
+  const pos = bot.group.position, L = bot.lkp;
+  const lkpAge = L ? now - L.t : Infinity;
+  const dL = L ? Math.hypot(L.x - pos.x, L.z - pos.z) : Infinity;
+  let alive = 0;
+  for (let i = 0; i < aiPlayers.length; i++) if (aiPlayers[i].alive) alive++;
+  const late = alive <= 8;
+  // 当前战术到期 / 失效
+  if (bot.tactic) {
+    const expired = now > bot.tacticUntil;
+    const was = bot.tactic;
+    if (expired || (was === "hunt" && (!L || L.t <= bot.huntIgnoreT)) || (was === "overwatch" && (isOutsideSafe || isInBlueZone))) {
+      botEndTactic(bot);
+      // 蹲了半天没人来：胆子大的就主动摸过去
+      if (was === "ambush" && L && lkpAge < 30000 && L.t > bot.huntIgnoreT && Math.random() < 0.3 + bot.aggr * 0.6) { botStartHunt(bot, now); return; }
+    }
+  }
+  // 1) 附近听到 / 发现了玩家，但现在看不见：阴人 或 摸过去
+  if (L && lkpAge < 5000 && dL < 45 && !canSeePlayer && bot.tactic !== "ambush" &&
+      !(bot.tactic === "hunt" && now - bot.tacticSince < 10000) && now - bot.tacticInfoT > 8000) {
+    bot.tacticInfoT = now;
+    const inB = getBuildingContainingPoint(pos.x, pos.z, -0.3);
+    const pAmb = 0.2 + bot.camper * 0.5 + (inB ? 0.25 : 0) + (bot.hp < 60 ? 0.15 : 0) - (late ? 0.1 : 0);
+    if (Math.random() < pAmb) { botStartAmbush(bot, now, inB); return; }
+    if (Math.random() < 0.35 + bot.aggr * 0.6) { botStartHunt(bot, now); return; }
+  }
+  if (bot.tactic) return;
+  // 2) 搜猎：知道玩家大概在哪（听到枪声 / 挨了枪 / 交过火），好斗的人会追很远
+  if (L && L.t > bot.huntIgnoreT && lkpAge < 10000 + 25000 * bot.aggr && dL < 100 + 220 * bot.aggr + (late ? 150 : 0) &&
+      bot.hp > 40 && !isInBlueZone && Math.random() < 0.1 + bot.aggr * 0.7 + (late ? 0.35 : 0)) {
+    botStartHunt(bot, now);
+    return;
+  }
+  // 3) 决赛圈人少了：大致知道玩家在哪一片，主动过去找
+  if (late && (!L || lkpAge > 20000) && now > bot.nextIntelT && distToPlayer < 280 && !isInBlueZone) {
+    bot.nextIntelT = now + 15000 + Math.random() * 10000;
+    if (Math.random() < 0.4 + bot.aggr * 0.5) {
+      const n = Math.min(35, zoneState.curR * 0.25);
+      if (!bot.lkp) bot.lkp = { x: 0, y: 0, z: 0, t: 0 };
+      bot.lkp.x = playerRig.position.x + (Math.random() - 0.5) * 2 * n;
+      bot.lkp.z = playerRig.position.z + (Math.random() - 0.5) * 2 * n;
+      bot.lkp.y = 0; bot.lkp.t = now;
+      botStartHunt(bot, now);
+      return;
+    }
+  }
+  // 4) 爱蹲点的人：搜完房子就蹲在屋里守着门口 / 楼梯口
+  if (bot.camper > 0.6 && !bot.lootTarget && elapsed > bot.landedAt + 30 && !isOutsideSafe && !isInBlueZone && now > bot.nextCampTry) {
+    bot.nextCampTry = now + 20000 + Math.random() * 20000;
+    const inB = getBuildingContainingPoint(pos.x, pos.z, -0.3);
+    if (inB && Math.random() < bot.camper * 0.6) { botStartAmbush(bot, now, inB, true); return; }
+  }
+  // 5) 架点狙击：带着高倍镜狙 / 连狙、装备搜得差不多了，就去圈里的高楼窗口架着
+  if (botHasScopedLongGun(bot) && elapsed > bot.landedAt + 40 && !bot.lootTarget && !isOutsideSafe && !isInBlueZone &&
+      bot.hp > 50 && now > bot.nextOverwatchTry) {
+    bot.nextOverwatchTry = now + 25000 + Math.random() * 15000;
+    if (Math.random() < bot.sniperPref) {
+      const s = botFindOverwatchSpot(bot);
+      if (s) {
+        botStartTactic(bot, "overwatch", now, 70000 + Math.random() * 50000);
+        bot.owSpot = s;
+        overwatchClaims.add(s.b);
+      }
+    }
+  }
+}
+
+// 搜猎的目标点：远的时候从侧面包抄，到了最后位置还没看到人就在附近搜一阵，搜不到就放弃
+function botHuntGoal(bot, now) {
+  const pos = bot.group.position, L = bot.lkp;
+  const dL = Math.hypot(L.x - pos.x, L.z - pos.z);
+  if (bot.huntSearchUntil > 0) {
+    if (now > bot.huntSearchUntil) {
+      bot.huntIgnoreT = L.t; // 这条情报用完了
+      botEndTactic(bot);
+      return null;
+    }
+    if (!bot.huntSearchPt || now > bot.huntSearchNext || Math.hypot(bot.huntSearchPt.x - pos.x, bot.huntSearchPt.z - pos.z) < 2) {
+      bot.huntSearchNext = now + 3500 + Math.random() * 2000;
+      const inB = getBuildingContainingPoint(L.x, L.z, 0.3);
+      let x = L.x, z = L.z;
+      for (let k = 0; k < 5; k++) {
+        x = L.x + (Math.random() - 0.5) * 24; z = L.z + (Math.random() - 0.5) * 24;
+        if (inB) {
+          x = Math.max(inB.cx - inB.w / 2 + 1, Math.min(inB.cx + inB.w / 2 - 1, x));
+          z = Math.max(inB.cz - inB.d / 2 + 1, Math.min(inB.cz + inB.d / 2 - 1, z));
+        }
+        if (!isPointBlocked2D(x, z, 0.44, inB ? L.y : 0)) break;
+      }
+      bot.huntSearchPt = new THREE.Vector3(x, inB ? L.y : 0, z);
+    }
+    return bot.huntSearchPt;
+  }
+  // 楼上 / 屋顶够不着时，走到楼下附近也算到了
+  if (dL < 4 && (Math.abs(L.y - pos.y) < 1.5 || now - bot.tacticSince > 25000)) {
+    bot.huntSearchUntil = now + 7000 + Math.random() * 6000;
+    return new THREE.Vector3(L.x, L.y, L.z);
+  }
+  // 情报位置有误差：不在楼里的点一律当成地面
+  const ly = getBuildingContainingPoint(L.x, L.z, 0.3) ? L.y : 0;
+  if (dL > 30 && bot.aggr > 0.3) {
+    // 包抄：从侧面绕过去，越近越收回到正面（每 4 秒重新定一次包抄点，目标固定才好绕路）
+    if (!bot.huntFlankPt || now > bot.huntFlankNext) {
+      const ux = (L.x - pos.x) / dL, uz = (L.z - pos.z) / dL;
+      const off = Math.min(20, dL * 0.35) * bot.flankSide;
+      bot.huntFlankPt = new THREE.Vector3(L.x - uz * off, 0, L.z + ux * off);
+      bot.huntFlankNext = now + 4000;
+    }
+    return bot.huntFlankPt;
+  }
+  return new THREE.Vector3(L.x, ly, L.z);
 }
 
 // ============================================================================
@@ -398,13 +721,15 @@ function updateAIBot(bot, dt, now, elapsed) {
     const isInBlueZone = distToSafeCenter > zoneState.curR;
     const isAlerted = now < bot.alertUntil;
     const distToPlayer = bot.group.position.distanceTo(playerRig.position);
-    const canSeePlayer = player.phase === "ground" && distToPlayer < 135 && hasLineOfSight(bot.group.position, playerRig.position, 1.5, -0.2);
+    const canSeePlayer = botCanSeePlayer(bot, distToPlayer, now, dt);
     if (canSeePlayer) {
       if (!bot.lkp) bot.lkp = { x: 0, y: 0, z: 0, t: 0 };
       bot.lkp.x = playerRig.position.x; bot.lkp.y = player.feetY; bot.lkp.z = playerRig.position.z; bot.lkp.t = now;
     }
     const stunned = now < bot.stunnedUntil;
     const fleeing = now < bot.fleeUntil;
+    bot.crouchWant = false;
+    botUpdateTactic(bot, now, elapsed, distToPlayer, canSeePlayer, isOutsideSafe, isInBlueZone);
 
     // 打药被打断：进入交火视野或身处毒圈时放弃
     if (bot.healUntil > 0 && ((isAlerted && canSeePlayer) || isInBlueZone)) bot.healUntil = 0;
@@ -421,7 +746,7 @@ function updateAIBot(bot, dt, now, elapsed) {
     let moveGoal = bot.targetPos;
     let moveSpd = isInBlueZone ? 6.3 : 5.0;
     let moveMode = "patrol";
-    let adTarget = null;
+    let adTarget = null, huntGoal = null;
 
     // 0. 躲手雷 / 逃离火海（最高优先级）；被震爆弹闪到时原地踉跄
     if (fleeing) {
@@ -488,6 +813,11 @@ function updateAIBot(bot, dt, now, elapsed) {
         moveGoal.y = bot.group.position.y;
       }
       moveSpd = now < bot.strafePauseUntil ? 0 : (closeGun && distToPlayer > prefRange + 12 ? 5.9 : 5.4);
+      // 狙击 / 连狙远距离对枪：原地架枪不乱跑（窗边站着打，野外蹲下打）
+      if (sniper && distToPlayer > 80) {
+        moveSpd = 0;
+        if (!fightIn) bot.crouchWant = true;
+      }
     } else if (now < bot.pushUntil && bot.lkp && bot.weaponKey) {
       // 闪光弹扔进去之后：冲到玩家最后出现的位置
       moveMode = "push";
@@ -497,6 +827,7 @@ function updateAIBot(bot, dt, now, elapsed) {
       // 3. 受伤且安全时原地打药（约 4 秒回 45 血，期间被发现则中断）
       moveMode = "heal";
       moveSpd = 0;
+      bot.crouchWant = true;
       if (bot.healUntil === 0) {
         bot.healUntil = now + 3500 + Math.random() * 1500;
       } else if (now >= bot.healUntil) {
@@ -532,6 +863,27 @@ function updateAIBot(bot, dt, now, elapsed) {
       } else if (elapsed > bot.landedAt + 22) {
         botGiveWeapon(bot, "ump45", {});
       }
+    } else if (bot.tactic === "ambush") {
+      // 阴人：蹲下、开好镜，枪口对着门口 / 楼梯口 / 声音方向，一露头就打
+      moveMode = "ambush";
+      moveSpd = 0;
+      bot.crouchWant = true;
+    } else if (bot.tactic === "hunt" && bot.lkp && (huntGoal = botHuntGoal(bot, now))) {
+      // 搜猎：远处跑过去（侧面包抄），接近后放慢脚步端着枪摸过去，到了就在附近搜
+      moveMode = "hunt";
+      moveGoal = huntGoal;
+      const L = bot.lkp, dL = Math.hypot(L.x - bot.group.position.x, L.z - bot.group.position.z);
+      bot.huntNear = dL < 35;
+      moveSpd = bot.huntSearchUntil > 0 ? 3.0 : (dL > 40 ? 5.6 : 3.0);
+      if (dL < 45) bot.alertUntil = Math.max(bot.alertUntil, now + 1500);
+    } else if (bot.tactic === "overwatch" && bot.owSpot) {
+      // 架点狙击：上楼走到窗边，站在窗口用倍镜扫视圈里
+      moveMode = "overwatch";
+      const s = bot.owSpot, dS = Math.hypot(s.x - bot.group.position.x, s.z - bot.group.position.z);
+      // 要站到窗口正中（偏了窗框会挡住视线），最后几步放慢走准
+      bot.owAt = Math.abs(s.y - bot.group.position.y) < 0.8 && dS < (bot.owAt ? 2.0 : 0.55);
+      if (bot.owAt) moveSpd = 0;
+      else { moveGoal = s.v || (s.v = new THREE.Vector3(s.x, s.y, s.z)); moveSpd = dS < 2.5 && Math.abs(s.y - bot.group.position.y) < 0.8 ? 1.6 : 5.0; }
     } else if (!isAlerted && bot.hp > 45 && (adTarget = botPickAirdrop(bot, now)) &&
                Math.hypot(adTarget.x - bot.group.position.x, adTarget.z - bot.group.position.z) > 14) {
       // 5. 抢空投：冲刺跑向空投（到 14 米内交给下面的搜刮逻辑去捡箱子周围的物资）
@@ -575,13 +927,16 @@ function updateAIBot(bot, dt, now, elapsed) {
     const reloadingNow = now < bot.reloadUntil || now < bot.swapUntil || bot.healUntil > 0 || stunned;
     const hipRange = wTypeNow === "SG" ? 18 : 10;
     const fightingBot = now < bot.foeUntil;
-    const wantADS = !!bot.weaponKey && !reloadingNow && ((moveMode === "combat" && distToPlayer > hipRange) || fightingBot);
+    // 阴人 / 摸近目标时提前开镜；架点时隔一会儿开镜扫一圈
+    const scanADS = (moveMode === "overwatch" && bot.owAt && Math.sin(now * 0.0007 + bot.wanderPhase * 3) > 0.1) ||
+      moveMode === "ambush" || (moveMode === "hunt" && bot.huntNear);
+    const wantADS = !!bot.weaponKey && !reloadingNow && ((moveMode === "combat" && distToPlayer > hipRange) || fightingBot || scanADS);
     bot.adsBlend = wantADS ? Math.min(1, bot.adsBlend + dt / botAdsTime(bot)) : Math.max(0, bot.adsBlend - dt / 0.16);
     bot.aimSettle = wantADS && bot.adsBlend >= 1 ? Math.min(1, bot.aimSettle + dt / 1.2) : 0;
     if (bot.adsBlend > 0) moveSpd *= 1 - 0.45 * bot.adsBlend;
     const aimInDone = !(moveMode === "combat" && distToPlayer > hipRange) || bot.adsBlend >= 0.9;
     // 枪口上下对准目标（目标站 / 蹲 / 趴的高度不同，楼上楼下也能对准）
-    if (moveMode === "combat") bot.aimPitch = Math.atan2(player.feetY + player.eyeH * 0.72 - (bot.group.position.y + 1.55), Math.max(1, distToPlayer));
+    if (moveMode === "combat") bot.aimPitch = Math.atan2(player.feetY + player.eyeH * 0.72 - (bot.group.position.y + 1.55 - 0.42 * bot.crouchBlend), Math.max(1, distToPlayer));
     else if (fightingBot) bot.aimPitch = Math.atan2(bot.foeY + 1.2 - (bot.group.position.y + 1.55), Math.max(1, bot.foeDist));
     else bot.aimPitch *= Math.max(0, 1 - dt * 6);
     bot.wanderAmp = moveMode === "patrol" ? 0.26 : (moveMode === "zone" ? 0.14 : (moveMode === "loot" ? 0.08 : 0));
@@ -599,6 +954,12 @@ function updateAIBot(bot, dt, now, elapsed) {
         bot.nextLootScan = now + 300;
       } else if (moveMode === "patrol") {
         bot.targetPos.set(bot.group.position.x + (Math.random() - 0.5) * 60, 0, bot.group.position.z + (Math.random() - 0.5) * 60);
+      } else if (moveMode === "hunt") {
+        // 走不过去：就地开始搜（换个搜索点）
+        if (bot.huntSearchUntil === 0) bot.huntSearchUntil = now + 6000;
+        bot.huntSearchNext = 0;
+      } else if (moveMode === "overwatch") {
+        botEndTactic(bot);
       }
     }
 
@@ -623,6 +984,15 @@ function updateAIBot(bot, dt, now, elapsed) {
     } else if (now < bot.faceHintUntil) {
       faceYaw = bot.faceHintYaw;
       turnRate = 9;
+    } else if (moveMode === "ambush") {
+      faceYaw = bot.ambushYaw + Math.sin(now * 0.0007 + bot.wanderPhase) * 0.2;
+      turnRate = 5;
+    } else if (moveMode === "overwatch" && bot.owAt) {
+      faceYaw = bot.owSpot.yaw + Math.sin(now * 0.00045 + bot.wanderPhase) * 0.6;
+      turnRate = 2.5;
+    } else if (moveMode === "hunt" && bot.huntNear && bot.huntSearchUntil === 0) {
+      faceYaw = Math.atan2(bot.lkp.x - bot.group.position.x, bot.lkp.z - bot.group.position.z);
+      turnRate = 6;
     } else if (bot.curSpeed < 0.8) {
       faceYaw = bot.moveHeading + Math.sin(now * 0.0011 + bot.wanderPhase) * 1.0;
       turnRate = 2.2;
@@ -641,13 +1011,19 @@ function updateAIBot(bot, dt, now, elapsed) {
       const cdBase = prof.cdMin + Math.random() * (prof.cdMax - prof.cdMin);
       const fireCooldown = isAlerted ? cdBase : cdBase * 1.8;
       if (now - bot.lastFireTime > fireCooldown) {
-        const engageRange = isAlerted ? prof.maxRange : Math.min(prof.maxRange, (wType === "SR" || wType === "DMR") ? 110 : 78);
-        const engageChance = isAlerted ? 0.88 : 0.42;
+        const fullRange = botEngageRange(bot, prof, wType);
+        const engageRange = isAlerted ? fullRange : fullRange * ((wType === "SR" || wType === "DMR") ? 0.9 : 0.58);
+        const engageChance = moveMode === "ambush" ? 1 : (isAlerted ? 0.88 : 0.42);
 
         if (botConsiderThrow(bot, now, distToPlayer, canSeePlayer, isAlerted)) {
           bot.lastFireTime = now;
         } else if (player.phase === "ground" && distToPlayer < engageRange && canSeePlayer && !aimInDone) {
           // 正在举枪开镜：瞄好再打（这一下不会去打别人）
+        } else if (player.phase === "ground" && distToPlayer < fullRange && canSeePlayer && !isAlerted && distToPlayer > 60) {
+          // 远处发现了人：先进入交火状态、开好镜再打（不再远距离腰射）
+          bot.alertUntil = now + 8000;
+          bot.lastFireTime = now;
+          setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 700);
         } else if (player.phase === "ground" && distToPlayer < engageRange && Math.random() < engageChance && canSeePlayer) {
           bot.lastFireTime = now;
           bot.alertUntil = Math.max(bot.alertUntil, now + 6000);
@@ -666,18 +1042,15 @@ function updateAIBot(bot, dt, now, elapsed) {
             bot.foe = otherBot;
             bot.foeY = otherBot.group.position.y;
             bot.foeDist = otherBot.group.position.distanceTo(bot.group.position);
-            if (distToPlayer < 260 && bot.weaponAtts[bot.activeSlot].muzzle !== "supp") spawnBotMuzzleFlash(bot);
-            sfx.playShot(bot.weaponAtts[bot.activeSlot].muzzle === "supp", 1.0, distToPlayer, stereoPanFor(bot.group.position.x, bot.group.position.z));
-            registerRadarSound("shot", bot.group.position.x, bot.group.position.z, false);
+            if (distToPlayer < 320 && bot.weaponAtts[bot.activeSlot].muzzle !== "supp") spawnBotMuzzleFlash(bot);
+            botShotSound(bot, bot.weaponAtts[bot.activeSlot].muzzle === "supp", distToPlayer);
             // AI 互殴：伤害随武器类型变化，并扣除对方防弹衣减伤
             const od = otherBot.group.position.distanceTo(bot.group.position);
             const typeMul = wType === "SG" ? (od < 15 ? 1.6 : 0.4) : (AI_VS_AI_DMG[wType] || 1);
-            otherBot.hp -= Math.round(36 * typeMul * (1 - botArmorReduction(otherBot, false)) / 0.9);
-            botAfterShots(bot, prof.volley, od, now);
+            // 子弹飞到了才扣血（见 ballistics.js）
+            scheduleBotHit(bot, otherBot, Math.round(36 * typeMul * (1 - botArmorReduction(otherBot, false)) / 0.9), od);
             replayBotShot(bot, otherBot.group.position.x, otherBot.group.position.y + 1.2, otherBot.group.position.z, true, prof.volley);
-            if (otherBot.hp <= 0) {
-              killAIBot(otherBot, bot.name, WEAPONS_DATA[bot.weaponKey].name, Math.random() < 0.25, false);
-            }
+            botAfterShots(bot, prof.volley, od, now);
           }
         }
       }

@@ -143,6 +143,12 @@ class SoundEngine {
     osc.connect(g); g.connect(this.out(0));
     osc.start(now); osc.stop(now + 0.05);
   }
+  // 子弹擦着耳边飞过的破空声
+  playWhiz(pan) {
+    this.init();
+    this.noiseBurst(0.07, "bandpass", 5200, 2.2, 0.22, pan, 0.07, 2600);
+    this.noiseBurst(0.03, "highpass", 6500, 0.7, 0.12, pan, 0.03);
+  }
   playBounce(dist, pan) {
     this.init();
     const v = Math.max(0, 1 - dist / 45) * 0.16;
@@ -240,14 +246,18 @@ function surfaceTypeAt(x, z, feetY) {
   return "grass";
 }
 
-// AI 听到玩家脚步：附近（站立跑动 20 米、蹲走 8 米、趴下听不到）且看不见玩家的 AI 会转头望向声音方向
+// AI 听到玩家脚步：附近（站立跑动 20 米、蹲走 8 米、趴下听不到）且看不见玩家的 AI 会转头望向声音方向，
+// 并记下大概位置（据此决定是蹲着阴人还是摸过去）
 function notifyBotsOfPlayerStep() {
   const r = player.stance === "stand" ? 20 : (player.stance === "crouch" ? 8 : 0);
   if (r <= 0) return;
+  const now = performance.now();
   for (let i = 0; i < aiPlayers.length; i++) {
     const bot = aiPlayers[i];
     if (!bot.alive || bot.phase !== "ground") continue;
     const d = Math.hypot(bot.group.position.x - playerRig.position.x, bot.group.position.z - playerRig.position.z);
-    if (d < r && performance.now() > bot.faceHintUntil) setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 1200);
+    if (d >= r) continue;
+    if (now > bot.faceHintUntil) setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 1200);
+    if (!bot.lkp || now - bot.lkp.t > 400) botLearnPlayerPos(bot, now, 0.12);
   }
 }

@@ -78,6 +78,9 @@ function computeAINavSubTarget(botPos, finalGoal) {
     if (Math.hypot(botPos.x - entryDoor.x, botPos.z - entryDoor.z) > 1.8 && Math.abs(botPos.x - goalHouse.cx) > 1.1) {
       return new THREE.Vector3(entryDoor.x, 0, entryDoor.z);
     }
+    // 到了门口：先笔直走进门里一步，再去屋里的目标（目标贴着门边那面墙时，斜着走会一直蹭墙出不去）
+    const north = entryDoor === goalHouse.northDoor;
+    return new THREE.Vector3(goalHouse.cx, 0, goalHouse.cz + (north ? -1 : 1) * (goalHouse.d / 2 - 1.4));
   }
 
   return finalGoal;
@@ -212,7 +215,18 @@ function animateBotBody(bot, dt, aiming, distToPlayer, now) {
   const targetLean = 0.03 + speedN * 0.17 * (1 - aim * 0.6) - (bot.aimPitch || 0) * aim * 0.9;
   bot.upper.rotation.x += (targetLean - bot.upper.rotation.x) * k;
   bot.upper.rotation.y = swing * 0.07 * speedN * (1 - aim);
-  bot.upper.position.y = 0.72 + Math.abs(Math.cos(bot.walkCycle)) * 0.045 * speedN + Math.sin(now * 0.002 + bot.wanderPhase) * 0.006;
+  // 蹲下：上半身和髋部一起降低 0.42 米，一条腿向前屈膝、一条腿向后跪地（停下来才蹲，走动时站起来）
+  const crouchOn = bot.crouchWant && bot.curSpeed < 1.2 && now > bot.standUntil;
+  bot.crouchBlend += ((crouchOn ? 1 : 0) - bot.crouchBlend) * Math.min(1, dt * 7);
+  const cr = bot.crouchBlend;
+  const hipY = 0.72 - 0.42 * cr;
+  bot.upper.position.y = hipY + Math.abs(Math.cos(bot.walkCycle)) * 0.045 * speedN + Math.sin(now * 0.002 + bot.wanderPhase) * 0.006;
+  bot.legLPivot.position.y = hipY;
+  bot.legRPivot.position.y = hipY;
+  if (cr > 0.001) {
+    bot.legLPivot.rotation.x += (-1.25 - bot.legLPivot.rotation.x) * cr;
+    bot.legRPivot.rotation.x += (1.3 - bot.legRPivot.rotation.x) * cr;
+  }
   bot.head.rotation.z = 0.16 * ads;
 
   const armSwing = swing * 0.55 * speedN * (1 - aim);
@@ -256,6 +270,8 @@ function animateBotBody(bot, dt, aiming, distToPlayer, now) {
 function poseBotInAir(bot, inChute) {
   bot.upper.rotation.set(inChute ? 0.05 : 0.95, 0, 0);
   bot.upper.position.y = 0.72;
+  bot.legLPivot.position.y = 0.72;
+  bot.legRPivot.position.y = 0.72;
   bot.armLPivot.rotation.set(inChute ? -2.8 : 0, inChute ? 0.25 : 0, inChute ? 0 : -1.35);
   bot.armRPivot.rotation.set(inChute ? -2.8 : 0, inChute ? -0.25 : 0, inChute ? 0 : 1.35);
   bot.legLPivot.rotation.x = inChute ? 0.12 : 0.45;
@@ -268,6 +284,11 @@ function alertNearbyAIsOnPlayerShot(isSuppressed) {
   aiPlayers.forEach(bot => {
     if (!bot.alive || bot.phase !== "ground") return;
     const d = bot.group.position.distanceTo(playerRig.position);
+    // 更远处隐约听到枪声：只知道大概方位（误差大），好斗的 AI 会循声摸过去
+    if (d > hearRadius && d <= hearRadius * 1.9) {
+      if (!bot.lkp || now - bot.lkp.t > 3000) botLearnPlayerPos(bot, now, 0.12);
+      return;
+    }
     if (d <= hearRadius) {
       bot.alertUntil = now + 9500;
       // 听声辨位：记下大概位置（有几米误差），玩家躲起来时往这里扔投掷物

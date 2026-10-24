@@ -311,6 +311,7 @@ window.addEventListener("keydown", e => {
   if (e.code === "KeyG" && !e.repeat) beginThrowAim();
   if (e.code === "KeyX" && player.aimingThrow) cancelThrowAim(true);
   if (e.code === "KeyT") cycleThrowable();
+  if (e.code === "KeyV" && !e.repeat) markerFromCrosshair();
   if (e.code === "Tab") {
     e.preventDefault();
     const modal = document.getElementById("backpack-modal");
@@ -330,6 +331,7 @@ renderer.domElement.addEventListener("mousedown", e => {
     return;
   }
   if (e.button === 0) startTrigger();
+  else if (e.button === 1) { e.preventDefault(); markerFromCrosshair(); }
   else if (e.button === 2 && player.aimingThrow) cancelThrowAim(true);
   else if (e.button === 2 && !player.aimingThrow) { player.reopenADSAfterBolt = false; player.isADS = !player.isADS; updateScopeState(); }
 });

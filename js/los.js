@@ -116,12 +116,13 @@ function syncShootGrid() {
     }
   }
 }
-function gatherShootCandidates(ray, far) {
+// includeAI = false：只要场景物体（子弹弹道单独处理 AI 命中盒）
+function gatherShootCandidates(ray, far, includeAI = true) {
   if (shootGridCount !== shootableEnvironment.length) syncShootGrid();
   shootStamp++;
   shootCandidates.length = 0;
   shootCandidates.push(shootableEnvironment[0]);
-  for (let i = 0; i < aiHitboxes.length; i++) shootCandidates.push(aiHitboxes[i]);
+  if (includeAI) for (let i = 0; i < aiHitboxes.length; i++) shootCandidates.push(aiHitboxes[i]);
   const x0 = ray.origin.x, z0 = ray.origin.z;
   const dx = ray.direction.x * far, dz = ray.direction.z * far;
   let cx = Math.floor(x0 / SHOOT_CELL), cz = Math.floor(z0 / SHOOT_CELL);

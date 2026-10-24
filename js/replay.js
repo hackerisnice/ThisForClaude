@@ -4,7 +4,7 @@
 
 const REC_HZ = 20, REC_SECONDS = 16;
 const REC_CAP = REC_HZ * REC_SECONDS;
-const RB_STRIDE = 29;   // 每个 AI 每帧记录的数值个数
+const RB_STRIDE = 30;   // 每个 AI 每帧记录的数值个数
 // AI 手里的枪 / 倍镜按编号记录（回放击杀者第一人称时还原它的开镜画面）
 const REPLAY_WEAPON_KEYS = Object.keys(WEAPONS_DATA);
 const REPLAY_SCOPE_KEYS = Object.keys(ATTACHMENTS_DATA).filter(k => ATTACHMENTS_DATA[k].slot === "scope");
@@ -54,6 +54,7 @@ function writeBotState(bot, A, o) {
   A[o + 27] = bot.weaponKey ? REPLAY_WEAPON_KEYS.indexOf(bot.weaponKey) : -1;
   const sc = bot.weaponKey && bot.weaponAtts[bot.activeSlot].scope;
   A[o + 28] = sc ? REPLAY_SCOPE_KEYS.indexOf(sc) : -1;
+  A[o + 29] = bot.legLPivot.position.y; // 髋部高度（蹲下时降低）
 }
 function writePlayerState(A, o) {
   A[o] = playerRig.position.x; A[o + 1] = player.feetY; A[o + 2] = playerRig.position.z;
@@ -122,9 +123,13 @@ function makeReplayClip(t0, t1, meta) {
 
 // 事件：开枪（shooter：-1 = 玩家，>=0 = AI 编号）。ends = 每发子弹的终点 [x,y,z,...]，
 // impacts = 每发的结果（0 擦身飞过 / 1 打中人 / 2 打在地面墙面），连射每发间隔 gap 秒
-function replayShotEvent(shooter, fx, fy, fz, ends, impacts, gap = 0.09) {
+// t = 开枪时刻（子弹落点要等飞到才知道，所以可能晚于开枪时刻才记录；按时间顺序插入）；speed = 弹速
+function replayShotEvent(shooter, fx, fy, fz, ends, impacts, gap = 0.09, t = replayRec.clock, speed = 600) {
   if (replayState.active) return;
-  replayRec.events.push({ t: replayRec.clock, type: "shot", s: shooter, fx, fy, fz, ends, impacts, gap });
+  const ev = replayRec.events, e = { t, type: "shot", s: shooter, fx, fy, fz, ends, impacts, gap, speed };
+  let i = ev.length;
+  while (i > 0 && ev[i - 1].t > t) i--;
+  ev.splice(i, 0, e);
 }
 // AI 开枪：子弹从真实枪口出发。打中 → 落在目标身上；没打中 → 从目标身边擦过飞远
 // （偏差按距离和是否开镜决定，开镜后的偏差明显更小）
@@ -156,7 +161,7 @@ function replayBotShot(bot, tx, ty, tz, hit, n = 1) {
     ends.push(m.x + _rpDir.x * len, m.y + _rpDir.y * len, m.z + _rpDir.z * len);
     impacts.push(impact);
   }
-  replayShotEvent(bot.id, m.x, m.y, m.z, ends, impacts);
+  replayShotEvent(bot.id, m.x, m.y, m.z, ends, impacts, 0.09, replayRec.clock, bot.weaponKey ? bulletSpeedOf(bot.weaponKey) : 600);
 }
 function replayFxEvent(kind, x, y, z) {
   if (replayState.active) return;
@@ -169,14 +174,16 @@ function replayOnBotKilled(bot, crate, killerName, weaponName, isHeadshot, byPla
   R.events.push({ t, type: "kill", victim: bot.id, crate });
   if (!byPlayer) return;
   const dist = Math.round(Math.hypot(bot.group.position.x - playerRig.position.x, bot.group.position.z - playerRig.position.z));
+  // 场上已经没有别的 AI 了：这一枪就是吃鸡的最后一击
+  const winKill = player.phase !== "dead" && !aiPlayers.some(b => b.alive);
   R.killPending++;
   R.pending.push({
     at: t + 1.5,
     make: () => {
       R.killPending--;
       const clip = makeReplayClip(t - 7, t + 1.5, {
-        kind: "kill", killT: t, killer: -1, victim: bot.id,
-        title: `你 使用 ${weaponName} ${isHeadshot ? "爆头" : ""}淘汰了 ${bot.name}`, sub: `距离 ${dist} 米`
+        kind: "kill", killT: t, killer: -1, victim: bot.id, winKill,
+        title: `${winKill ? "🏆 " : ""}你 使用 ${weaponName} ${isHeadshot ? "爆头" : ""}淘汰了 ${bot.name}${winKill ? "，大吉大利！" : ""}`, sub: `距离 ${dist} 米`
       });
       if (!clip) { refreshReplayButtons(); return; }
       R.killClips.push(clip);
@@ -223,15 +230,15 @@ function refreshReplayButtons() {
     rpDeathBtn.disabled = !R.deathClip;
     rpDeathBtn.innerText = R.deathClip ? "🎬 观看淘汰回放" : "🎬 回放生成中…";
   } else rpDeathBtn.style.display = "none";
-  const pendingKill = R.killPending > 0 && R.killClips.length === 0;
-  if (R.killClips.length) {
-    rpKillBtn.style.display = "inline-block";
-    rpKillBtn.disabled = false;
-    rpKillBtn.innerText = "🎯 回放我的最后一杀";
-  } else if (pendingKill) {
+  // 最后一杀的片段还在录（击杀后要再录 1.5 秒）：先等它生成，不能拿上一杀的片段顶替
+  if (R.killPending > 0) {
     rpKillBtn.style.display = "inline-block";
     rpKillBtn.disabled = true;
     rpKillBtn.innerText = "🎯 击杀回放生成中…";
+  } else if (R.killClips.length) {
+    rpKillBtn.style.display = "inline-block";
+    rpKillBtn.disabled = false;
+    rpKillBtn.innerText = R.killClips[R.killClips.length - 1].winKill ? "🏆 回放吃鸡一击" : "🎯 回放我的最后一杀";
   } else rpKillBtn.style.display = "none";
 }
 function replayOnGameOver() { refreshReplayButtons(); }
@@ -351,6 +358,7 @@ function applyBotState(bot, A, oa, B, ob, al) {
   bot.chuteMesh.visible = (f & 2) !== 0;
   bot.botGunMesh.visible = (f & 4) !== 0;
   bot.legLPivot.rotation.x = L(5); bot.legRPivot.rotation.x = L(6);
+  bot.legLPivot.position.y = bot.legRPivot.position.y = L(29);
   bot.upper.rotation.x = L(7); bot.upper.rotation.y = L(8); bot.upper.position.y = L(9);
   bot.armLPivot.rotation.set(L(10), L(11), L(12));
   bot.armRPivot.rotation.set(L(13), L(14), L(15));
@@ -387,7 +395,7 @@ function entityAt(clip, id, t, out = _rpE) {
   out.pitch = A[oa + 25] + (A[ob + 25] - A[oa + 25]) * al;
   out.ads = A[oa + 26] + (A[ob + 26] - A[oa + 26]) * al;
   out.wep = A[oa + 27]; out.scope = A[oa + 28];
-  out.eye = 1.78;
+  out.eye = 1.78 - (0.72 - (A[oa + 29] + (A[ob + 29] - A[oa + 29]) * al)); // 蹲着时视线更低
   return out;
 }
 
@@ -492,7 +500,7 @@ function applyReplayFrame(clip, t) {
 function triggerReplayEvent(e) {
   if (e.type === "shot") {
     for (let k = 0; k < e.impacts.length; k++) {
-      rpTracers.push({ born: e.t + k * e.gap, fx: e.fx, fy: e.fy, fz: e.fz, tx: e.ends[k * 3], ty: e.ends[k * 3 + 1], tz: e.ends[k * 3 + 2], impact: e.impacts[k], done: false, flashed: false });
+      rpTracers.push({ born: e.t + k * e.gap, fx: e.fx, fy: e.fy, fz: e.fz, tx: e.ends[k * 3], ty: e.ends[k * 3 + 1], tz: e.ends[k * 3 + 2], impact: e.impacts[k], speed: e.speed || TRACER_SPEED, done: false, flashed: false });
     }
   } else if (e.type === "fx") {
     const p = new THREE.Vector3(e.x, e.y + 0.4, e.z);
@@ -523,7 +531,7 @@ function updateReplayTracers(t) {
     if (t < tr.born) continue;
     const dx = tr.tx - tr.fx, dy = tr.ty - tr.fy, dz = tr.tz - tr.fz;
     const dist = Math.hypot(dx, dy, dz) || 1;
-    const s = (t - tr.born) * TRACER_SPEED;
+    const s = (t - tr.born) * tr.speed;
     if (!tr.flashed) {
       tr.flashed = true;
       spawnFx({ pos: new THREE.Vector3(tr.fx, tr.fy, tr.fz), color: 0xffd27a, s0: 0.5, s1: 0.9, a0: 1, a1: 0, life: 0.07, additive: true });

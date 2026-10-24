@@ -28,6 +28,30 @@ body, html {
   letter-spacing: 1.2px; color: #ffd27d; text-shadow: 0 1px 2px #000;
 }
 #match-Counters { display: flex; gap: 6px; align-items: center; pointer-events: auto; }
+#compass-wrap { position: relative; }
+/* 标点：指南针下方的方向 + 距离（点一下取消），画面里的旗子，📍按钮 */
+#marker-hud {
+  display: none; position: absolute; top: calc(100% + 3px); left: 50%; transform: translateX(-50%);
+  align-items: center; gap: 4px; white-space: nowrap; pointer-events: auto; cursor: pointer;
+  background: rgba(10, 12, 16, 0.7); border: 1px solid rgba(255, 176, 32, 0.7); border-radius: 10px;
+  padding: 1px 7px 1px 5px; font-size: 11px; color: #ffd27d; text-shadow: 0 1px 2px #000;
+}
+#marker-hud-arrow { display: inline-block; width: 10px; height: 12px; background: #ffb020; clip-path: polygon(50% 0, 100% 100%, 50% 72%, 0 100%); }
+#marker-hud-x { color: #ff7a5a; font-size: 10px; margin-left: 3px; }
+#marker-world { display: none; position: absolute; left: 0; top: 0; z-index: 12; pointer-events: none; will-change: transform; }
+#marker-world-pin {
+  position: absolute; left: -9px; top: -24px; width: 14px; height: 14px; background: #ffb020;
+  border: 2px solid #fff; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+}
+#marker-world-dist {
+  position: absolute; left: 0; top: -42px; transform: translateX(-50%); white-space: nowrap;
+  font-size: 11px; font-weight: 800; color: #ffd27d; text-shadow: 0 1px 2px #000, 0 0 3px #000;
+}
+#btn-mark {
+  width: 50px; height: 24px; left: 118px; top: 6px; border-radius: 12px; font-size: 10px;
+  background: rgba(25, 30, 36, 0.62); border-color: rgba(255, 176, 32, 0.8); transform-origin: top left;
+}
+#btn-mark.on { background: rgba(255, 150, 20, 0.55); }
 .counter-box {
   background: rgba(12, 15, 20, 0.78); border: 1px solid rgba(255, 165, 0, 0.45);
   padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 800;
@@ -285,7 +309,12 @@ body, html {
   background: rgba(6, 8, 10, 0.86); flex-direction: column;
   align-items: center; justify-content: center;
 }
-#bigmap-canvas { display: block; border: 1.5px solid rgba(255, 165, 0, 0.7); border-radius: 4px; }
+#bigmap-canvas { display: block; border: 1.5px solid rgba(255, 165, 0, 0.7); border-radius: 4px; cursor: crosshair; }
+#bigmap-close {
+  position: absolute; top: 8px; right: 12px; width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  background: rgba(30, 20, 18, 0.85); border: 1.5px solid #ff7a5a; color: #ff9a7a; font-size: 18px; font-weight: bold;
+}
 #bigmap-hint {
   position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
   font-size: 10px; color: #ffd27d; background: rgba(0, 0, 0, 0.6); padding: 2px 8px; border-radius: 3px; white-space: nowrap;

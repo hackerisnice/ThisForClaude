@@ -47,6 +47,15 @@ body, html {
   position: absolute; left: 0; top: -42px; transform: translateX(-50%); white-space: nowrap;
   font-size: 11px; font-weight: 800; color: #ffd27d; text-shadow: 0 1px 2px #000, 0 0 3px #000;
 }
+/* 门边的“开门 / 关门”按钮（准星右下方） */
+#btn-door {
+  display: none; position: absolute; z-index: 18; left: calc(50% + 64px); top: calc(50% + 24px);
+  height: 32px; padding: 0 14px; border-radius: 16px; align-items: center; justify-content: center; cursor: pointer;
+  background: rgba(20, 24, 30, 0.8); border: 1.5px solid rgba(255, 196, 90, 0.85); color: #ffe2a8;
+  font-size: 12px; font-weight: bold; text-shadow: 0 1px 2px #000; white-space: nowrap;
+  opacity: var(--btn-opacity); transform: scale(var(--btn-scale)); transform-origin: top left;
+}
+#btn-door:active { background: rgba(255, 150, 20, 0.6); }
 #btn-mark {
   width: 50px; height: 24px; left: 118px; top: 6px; border-radius: 12px; font-size: 10px;
   background: rgba(25, 30, 36, 0.62); border-color: rgba(255, 176, 32, 0.8); transform-origin: top left;
@@ -245,6 +254,7 @@ body, html {
 }
 #btn-ads { width: 42px; height: 42px; right: 12px; bottom: 118px; }
 #btn-jump { width: 38px; height: 38px; right: 12px; bottom: 68px; }
+#btn-jump.vault { background: rgba(255, 150, 20, 0.6); border-color: #ffe08a; font-size: 9px; }
 #btn-reload { width: 36px; height: 36px; right: 126px; bottom: 62px; }
 #btn-crouch { width: 36px; height: 36px; right: 98px; bottom: 10px; }
 #btn-prone { width: 36px; height: 36px; right: 52px; bottom: 10px; }
@@ -255,6 +265,7 @@ body, html {
 }
 #btn-throw small { font-size: 8px; font-weight: 800; color: #ffe08a; }
 #btn-throw.empty { filter: grayscale(1); opacity: calc(var(--btn-opacity) * 0.55); }
+#btn-throw.held { background: rgba(150, 190, 60, 0.75); border-color: #e8ffb0; box-shadow: 0 0 10px rgba(200, 255, 120, 0.7); opacity: 1; }
 #btn-throw-cycle {
   position: absolute; z-index: 18; right: 128px; bottom: 150px; min-width: 52px;
   padding: 2px 6px; border-radius: 9px; text-align: center;

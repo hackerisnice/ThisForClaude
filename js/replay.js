@@ -118,6 +118,7 @@ function makeReplayClip(t0, t1, meta) {
   });
   clip.t0 = clip.times[0];
   clip.t1 = clip.times[n - 1];
+  clip.doorInit = doorStatesAt(clip.t0);
   return clip;
 }
 
@@ -162,6 +163,31 @@ function replayBotShot(bot, tx, ty, tz, hit, n = 1) {
     impacts.push(impact);
   }
   replayShotEvent(bot.id, m.x, m.y, m.z, ends, impacts, 0.09, replayRec.clock, bot.weaponKey ? bulletSpeedOf(bot.weaponKey) : 600);
+}
+// 开门 / 关门
+function replayDoorEvent(id, open) {
+  if (replayState.active) return;
+  replayRec.events.push({ t: replayRec.clock, type: "door", id, open });
+}
+// 片段开头那一刻每扇门的开关状态：从现在的状态倒推回去（撤销 t0 之后的开关门事件）
+function doorStatesAt(t0) {
+  const st = new Uint8Array(doors.length);
+  doors.forEach((d, i) => { st[i] = d.open ? 1 : 0; });
+  const ev = replayRec.events;
+  for (let k = ev.length - 1; k >= 0 && ev[k].t > t0; k--) if (ev[k].type === "door") st[ev[k].id] = ev[k].open ? 0 : 1;
+  return st;
+}
+// 回放到 t 时刻：把门摆成当时的样子
+function applyReplayDoors(clip, t) {
+  if (!clip.doorInit) return;
+  if (doorMesh) refreshDoorSlots(false); // 回放镜头可能在别处，画它附近的门
+  const st = clip.doorWork || (clip.doorWork = new Uint8Array(clip.doorInit.length));
+  st.set(clip.doorInit);
+  clip.events.forEach(e => { if (e.type === "door" && e.t <= t) st[e.id] = e.open ? 1 : 0; });
+  for (let i = 0; i < st.length; i++) {
+    const d = doors[i];
+    if ((d.open ? 1 : 0) !== st[i] || d.t !== st[i]) snapDoor(d, st[i] === 1);
+  }
 }
 function replayFxEvent(kind, x, y, z) {
   if (replayState.active) return;
@@ -435,6 +461,7 @@ function applyReplayFrame(clip, t) {
   }
   // 尸体盒：淘汰后才出现
   clip.events.forEach(e => { if (e.type === "kill" && e.crate) e.crate.visible = t >= e.t + 0.9; });
+  applyReplayDoors(clip, t);
 
   // 玩家替身
   const av = getReplayAvatar();
@@ -701,14 +728,15 @@ function startReplay(clip) {
   for (let i = 0; i < REC_BOTS; i++) writeBotState(aiPlayers[i], live, i * RB_STRIDE);
   S.saved = {
     live, orders: aiPlayers.map(b => b.group.rotation.order), yaw, pitch, rig: playerRig.position.clone(), fov: camera.fov,
-    hidden: []
+    hidden: [], doors: doors.map(d => [d.open, d.t])
   };
+  doorBtn.style.display = "none";
   aiPlayers.forEach(b => { b.group.rotation.order = "YXZ"; });
   // 现场的烟雾 / 火焰 / 飞行中的投掷物先藏起来
   smokeClouds.forEach(c => c.sprites.forEach(sp => { if (sp.visible) { sp.visible = false; S.saved.hidden.push(sp); } }));
   fireZones.forEach(z => z.flames.forEach(sp => { if (sp.visible) { sp.visible = false; S.saved.hidden.push(sp); } }));
   activeThrows.forEach(t => { if (t.mesh.visible) { t.mesh.visible = false; S.saved.hidden.push(t.mesh); } });
-  [throwPreviewLine, throwPreviewRing, throwHandMesh].forEach(m => { if (m.visible) { m.visible = false; S.saved.hidden.push(m); } });
+  [throwPreviewLine, throwPreviewRing, throwHandGroup].forEach(m => { if (m.visible) { m.visible = false; S.saved.hidden.push(m); } });
   camera.fov = 70;
   camera.updateProjectionMatrix();
   S.active = true;
@@ -752,6 +780,8 @@ function exitReplay() {
   }
   S.clip.events.forEach(e => { if (e.type === "kill" && e.crate) e.crate.visible = true; });
   sv.hidden.forEach(o => { o.visible = true; });
+  sv.doors.forEach((s, i) => { snapDoor(doors[i], s[0]); doors[i].t = s[1]; if (doors[i].t !== (s[0] ? 1 : 0)) movingDoors.add(doors[i]); });
+  doorBtnText = "";
   if (replayAvatar) replayAvatar.group.visible = false;
   rpThrowMeshes.forEach(m => { m.visible = false; });
   rpTagA.visible = rpTagB.visible = false;

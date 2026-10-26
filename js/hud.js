@@ -33,7 +33,7 @@ function updateAllHUD() {
   [0, 1].forEach(idx => {
     const w = player.weapons[idx];
     const slotEl = document.getElementById("slot-wep-" + idx);
-    slotEl.classList.toggle("active", player.activeSlot === idx);
+    slotEl.classList.toggle("active", player.activeSlot === idx && !player.throwEquipped);
     if (!w) {
       document.getElementById("wep-name-" + idx).innerText = `${idx + 1}: 空置`;
       document.getElementById("wep-mode-" + idx).innerText = "--";
@@ -50,7 +50,10 @@ function updateAllHUD() {
 
   const curWep = player.weapons[player.activeSlot];
   const sgCircle = document.getElementById("sg-circle");
-  if (curWep) {
+  if (player.throwEquipped) {
+    document.getElementById("slot-firemode").innerText = "投掷";
+    sgCircle.style.display = "none";
+  } else if (curWep) {
     const b = WEAPONS_DATA[curWep.id];
     const st = getActiveWeaponEffectiveStats(curWep);
     document.getElementById("slot-firemode").innerText = st.hasBumpStock ? "撞火" : (modeNames[curWep.fireMode] || "单发");
@@ -73,6 +76,14 @@ function updateAllHUD() {
   const totalThrow = THROW_ORDER.reduce((n, k) => n + (player.throwBag[k] || 0), 0);
   document.getElementById("btn-throw").innerHTML = `${tSel.icon}<br><small>${tCnt > 0 ? "x" + tCnt : "无"}</small>`;
   document.getElementById("btn-throw").classList.toggle("empty", totalThrow === 0);
+  document.getElementById("btn-throw").classList.toggle("held", !!player.throwEquipped);
+  // 拿着投掷物时开火键变成“拉环 / 点燃”，拉着保险时是“松手投掷”
+  const pull = player.throwSel === "molotov" ? "点燃" : "拉环";
+  const fireR = player.aimingThrow ? "松手<br>投掷" : (player.throwEquipped ? "按住<br>" + pull : "开火<br>压枪");
+  const fireL = player.aimingThrow ? "投掷" : (player.throwEquipped ? pull : "开火");
+  const fr = document.getElementById("btn-fire-right"), fl = document.getElementById("btn-fire-left");
+  if (fr.dataset.label !== fireR) { fr.dataset.label = fireR; fr.innerHTML = fireR; }
+  if (fl.dataset.label !== fireL) { fl.dataset.label = fireL; fl.innerHTML = fireL; }
   document.getElementById("btn-throw-cycle").innerText = totalThrow > 0 ? `${tSel.short} ▸` : "投掷物";
 
   const healOrder = ["firstaid", "medkit", "bandage", "painkiller", "drink", "adrenaline"];

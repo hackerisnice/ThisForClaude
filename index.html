@@ -41,6 +41,7 @@
   </div>
 </div>
 
+<div id="btn-door">🚪 开门</div>
 <div class="touch-btn" id="btn-mark" title="标点测距 (V / 鼠标中键)，长按取消">📍标点</div>
 <div id="marker-world"><div id="marker-world-pin"></div><div id="marker-world-dist">0m</div></div>
 
@@ -71,6 +72,10 @@
   <div class="cfg-row">
     <span>自动拾取:</span>
     <label class="cfg-switch"><input type="checkbox" id="chk-auto-pickup" checked><span>枪 / 子弹 / 装备 / 药</span></label>
+  </div>
+  <div class="cfg-row">
+    <span>自动开门:</span>
+    <label class="cfg-switch"><input type="checkbox" id="chk-auto-door" checked><span>走向关着的门时自动推开</span></label>
   </div>
   <div class="cfg-row">
     <span>按钮大小:</span>
@@ -237,6 +242,7 @@
 <script src="js/render.js"></script>
 <script src="js/world.js"></script>
 <script src="js/buildings.js"></script>
+<script src="js/doors.js"></script>
 <script src="js/items.js"></script>
 <script src="js/mapgen.js"></script>
 <script src="js/nature.js"></script>
@@ -256,6 +262,7 @@
 <script src="js/hud.js"></script>
 <script src="js/map.js"></script>
 <script src="js/marker.js"></script>
+<script src="js/vault.js"></script>
 <script src="js/input.js"></script>
 <script src="js/replay.js"></script>
 <script src="js/main.js"></script>

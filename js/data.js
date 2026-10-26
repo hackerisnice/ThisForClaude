@@ -82,9 +82,9 @@ const MEDS_DATA = {
 
 // 投掷物：破片手榴弹 / 烟雾弹 / 震爆弹 / 燃烧瓶（重量与端游一致）
 const THROWABLES_DATA = {
-  frag:    { id: "frag",    name: "破片手榴弹", short: "手雷", icon: "💣", weight: 18, fuse: 3.4, speed: 18, color: 0x3d4a2b },
-  smoke:   { id: "smoke",   name: "烟雾弹",     short: "烟雾", icon: "💨", weight: 14, fuse: 1.8, speed: 17, color: 0x9aa0a6 },
-  stun:    { id: "stun",    name: "震爆弹",     short: "震爆", icon: "⚡", weight: 12, fuse: 2.0, speed: 18, color: 0x2a2c30 },
+  frag:    { id: "frag",    name: "破片手榴弹", short: "手雷", icon: "💣", weight: 18, fuse: 6, speed: 18, color: 0x3d4a2b },
+  smoke:   { id: "smoke",   name: "烟雾弹",     short: "烟雾", icon: "💨", weight: 14, fuse: 5, speed: 17, color: 0x9aa0a6 },
+  stun:    { id: "stun",    name: "震爆弹",     short: "震爆", icon: "⚡", weight: 12, fuse: 5, speed: 18, color: 0x2a2c30 },
   molotov: { id: "molotov", name: "燃烧瓶",     short: "燃烧", icon: "🔥", weight: 18, fuse: 0,   speed: 16, color: 0x5a7a34 }
 };
 const THROW_ORDER = ["frag", "smoke", "stun", "molotov"];

@@ -228,7 +228,7 @@ function updateADSAnimation(dt) {
     adsScopeEl.style.opacity = overlay;
     scopeSvgEl.style.transform = `scale(${(1 + (1 - overlay) * 0.22).toFixed(3)})`;
   }
-  // 捏着投掷物瞄准时收起枪
-  fpGunGroup.visible = adsAnim.t < 0.92 && !player.aimingThrow;
+  // 手上拿着投掷物时收起枪
+  fpGunGroup.visible = adsAnim.t < 0.92 && !player.throwEquipped;
   return e;
 }

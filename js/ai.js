@@ -963,6 +963,7 @@ function updateAIBot(bot, dt, now, elapsed) {
       }
     }
 
+    botOpenDoorsAhead(bot, now);
     // 脚步声：按步幅计步，带左右方位与地面材质；隔着楼层听起来更闷更小
     bot.stepAccum += movedDist;
     if (bot.stepAccum > 2.0) {

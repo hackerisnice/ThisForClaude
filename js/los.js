@@ -71,7 +71,7 @@ function losSegmentClear(ax, ay, az, bx, by, bz) {
   gatherLOSCandidates(ax, az, bx, bz);
   losRaycaster.set(origin, dir);
   losRaycaster.far = dist;
-  return losRaycaster.intersectObjects(losCandidates, false).length === 0;
+  return losRaycaster.intersectObjects(losCandidates, false).length === 0 && doorsSegmentHit(ax, ay, az, bx, by, bz) < 0;
 }
 // 烟雾弹的烟团会挡住 AI 视线
 function smokeBlocksSegment(ax, ay, az, bx, by, bz) {

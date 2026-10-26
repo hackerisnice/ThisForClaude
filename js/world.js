@@ -57,10 +57,13 @@ function syncColliderGrid() {
   }
 }
 
+// 关着的门只挡玩家（移动时临时打开这个开关）；AI 走到门前会自己推门，寻路也把门洞当通路
+let collideWithDoors = false;
 // 人物身体占据的高度区间：脚下 0.45m 以内的矮台阶可以直接迈过，头顶 1.6m 以上的结构不挡路
 function isPointBlocked2D(x, z, radius = 0.5, feetY = 0) {
   if (colliderGridCount !== wallColliders2D.length) syncColliderGrid();
   const lo = feetY + 0.45, hi = feetY + 1.6;
+  if (collideWithDoors && doorBlocksCircle(x, z, radius, lo, hi)) return true;
   const x0 = Math.floor((x - radius) / COLLIDER_CELL), x1 = Math.floor((x + radius) / COLLIDER_CELL);
   const z0 = Math.floor((z - radius) / COLLIDER_CELL), z1 = Math.floor((z + radius) / COLLIDER_CELL);
   for (let ix = x0; ix <= x1; ix++) {
@@ -80,9 +83,49 @@ function isPointBlocked2D(x, z, radius = 0.5, feetY = 0) {
   return false;
 }
 
+// 指定高度区间 [y0, y1] 内是否有东西挡着（翻越时用：缩起身子过窗口 / 矮墙），关着的门也算
+function isBodyBlocked(x, z, radius, y0, y1) {
+  if (colliderGridCount !== wallColliders2D.length) syncColliderGrid();
+  if (doorBlocksCircle(x, z, radius, y0, y1)) return true;
+  const x0 = Math.floor((x - radius) / COLLIDER_CELL), x1 = Math.floor((x + radius) / COLLIDER_CELL);
+  const z0 = Math.floor((z - radius) / COLLIDER_CELL), z1 = Math.floor((z + radius) / COLLIDER_CELL);
+  for (let ix = x0; ix <= x1; ix++) {
+    for (let iz = z0; iz <= z1; iz++) {
+      const arr = colliderGrid.get(gridKey(ix, iz));
+      if (!arr) continue;
+      for (let i = 0; i < arr.length; i++) {
+        const c = arr[i];
+        if (c.minY < y1 && c.maxY > y0 && x + radius > c.minX && x - radius < c.maxX && z + radius > c.minZ && z - radius < c.maxZ) return true;
+      }
+    }
+  }
+  return false;
+}
+// 某处“从脚下长起来”的障碍物（矮墙、窗台、箱子、石头……）顶面高度，没有返回 -Infinity。
+// 只算底部在脚边的碰撞体：窗户上方的过梁不算（它决定的是头顶够不够空）
+function obstacleTopAt(x, z, radius, feet) {
+  if (colliderGridCount !== wallColliders2D.length) syncColliderGrid();
+  let top = -Infinity;
+  if (doorBlocksCircle(x, z, radius, feet + 0.45, feet + 1.6)) top = 99; // 关着的门翻不过去
+  const x0 = Math.floor((x - radius) / COLLIDER_CELL), x1 = Math.floor((x + radius) / COLLIDER_CELL);
+  const z0 = Math.floor((z - radius) / COLLIDER_CELL), z1 = Math.floor((z + radius) / COLLIDER_CELL);
+  for (let ix = x0; ix <= x1; ix++) {
+    for (let iz = z0; iz <= z1; iz++) {
+      const arr = colliderGrid.get(gridKey(ix, iz));
+      if (!arr) continue;
+      for (let i = 0; i < arr.length; i++) {
+        const c = arr[i];
+        if (c.minY <= feet + 0.5 && c.maxY > feet + 0.45 && x + radius > c.minX && x - radius < c.maxX && z + radius > c.minZ && z - radius < c.maxZ && c.maxY > top) top = c.maxY;
+      }
+    }
+  }
+  return top;
+}
+
 // 某个三维点是否在实体内部（投掷物碰撞用）
 function isSolidAt(x, y, z, radius) {
   if (colliderGridCount !== wallColliders2D.length) syncColliderGrid();
+  if (doorBlocksPoint(x, y, z, radius)) return true; // 关着的门（手雷会弹回来）
   const x0 = Math.floor((x - radius) / COLLIDER_CELL), x1 = Math.floor((x + radius) / COLLIDER_CELL);
   const z0 = Math.floor((z - radius) / COLLIDER_CELL), z1 = Math.floor((z + radius) / COLLIDER_CELL);
   for (let ix = x0; ix <= x1; ix++) {

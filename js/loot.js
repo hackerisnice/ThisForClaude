@@ -95,7 +95,7 @@ function damagePlayer(dmg, attackerName, wepName, isHead = false) {
 
   if (player.hp <= 0) {
     player.phase = "dead";
-    cancelThrowAim();
+    unequipThrowable();
     replayOnPlayerDeath(attackerName, wepName);
     const rank = aiPlayers.filter(a => a.alive).length + 1;
     showGameOver(false, rank, `${attackerName} (${wepName})`);

@@ -80,6 +80,9 @@ function traceBulletSegment(b, a, dir, len) {
   let best = null;
   const env = _bRay.intersectObjects(cands, false);
   if (env.length) best = { kind: "env", dist: env[0].distance, point: env[0].point, normal: env[0].face ? env[0].face.normal : _up };
+  // 门板（门会动，不进静态网格，单独求交；打在门上不留弹孔）
+  const dh = doorsSegmentHit(a.x, a.y, a.z, a.x + dir.x * len, a.y + dir.y * len, a.z + dir.z * len);
+  if (dh >= 0 && (!best || dh * len < best.dist)) best = { kind: "door", dist: dh * len, point: a.clone().addScaledVector(dir, dh * len) };
   if (fromPlayer) {
     // 只检测路径附近还活着的 AI
     _bCand.length = 0;
@@ -154,7 +157,7 @@ function playerBulletHitBot(bot, isHead, point, info) {
 
 function finishBullet(b, hit) {
   const end = hit ? hit.point : b.p;
-  const impact = !hit ? 0 : (hit.kind === "env" ? 2 : 1);
+  const impact = !hit ? 0 : (hit.kind === "env" || hit.kind === "door" ? 2 : 1);
   // 录像：子弹轨迹（时间记在开枪那一刻，回放里按真实弹速飞）
   replayShotEvent(b.owner === -1 ? -1 : b.owner.id, b.from.x, b.from.y, b.from.z, [end.x, end.y, end.z], [impact], 0, b.born, b.v0);
   if (!hit) return;
@@ -163,6 +166,9 @@ function finishBullet(b, hit) {
       const t = WEAPONS_DATA[b.wId].type;
       addBulletHoleDecal(hit.point, hit.normal, t === "SG" ? 0.038 : 0.055);
     }
+  } else if (hit.kind === "door") {
+    const dd = hit.point.distanceTo(playerRig.position);
+    if (dd < 60) sfx.playBounce(dd * 0.6, stereoPanFor(hit.point.x, hit.point.z));
   } else if (hit.kind === "bot") {
     playerBulletHitBot(hit.bot, hit.head, hit.point, b.info);
   } else if (hit.kind === "player") {

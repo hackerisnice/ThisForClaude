@@ -15,11 +15,12 @@ function showToast(msg) {
 const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile|HarmonyOS/i.test(navigator.userAgent) ||
   (navigator.maxTouchPoints > 1 && Math.min(window.innerWidth, window.innerHeight) < 900);
 
-const gameSettings = { quality: "auto", lookSens: 1.0, adsSens: 1.0, btnScale: 1.0, btnOpacity: 0.74, autoPickup: true };
+const gameSettings = { quality: "auto", lookSens: 1.0, adsSens: 1.0, btnScale: 1.0, btnOpacity: 0.74, autoPickup: true, autoDoor: true };
 try {
   const saved = JSON.parse(localStorage.getItem("pubg_lite_settings") || "{}");
   if (["auto", "low", "mid", "high"].includes(saved.quality)) gameSettings.quality = saved.quality;
   if (typeof saved.autoPickup === "boolean") gameSettings.autoPickup = saved.autoPickup;
+  if (typeof saved.autoDoor === "boolean") gameSettings.autoDoor = saved.autoDoor;
   ["lookSens", "adsSens", "btnScale", "btnOpacity"].forEach(k => {
     if (typeof saved[k] === "number" && isFinite(saved[k])) gameSettings[k] = saved[k];
   });
@@ -40,6 +41,7 @@ function syncSettingsUI() {
   document.getElementById("val-ads-sens").innerText = gameSettings.adsSens.toFixed(2);
   document.getElementById("sel-quality").value = gameSettings.quality;
   document.getElementById("chk-auto-pickup").checked = gameSettings.autoPickup;
+  document.getElementById("chk-auto-door").checked = gameSettings.autoDoor;
 }
 
 document.getElementById("btn-ui-cfg").addEventListener("click", () => {
@@ -71,6 +73,10 @@ document.getElementById("rng-ads-sens").addEventListener("input", e => {
 });
 document.getElementById("chk-auto-pickup").addEventListener("change", e => {
   gameSettings.autoPickup = e.target.checked;
+  saveGameSettings();
+});
+document.getElementById("chk-auto-door").addEventListener("change", e => {
+  gameSettings.autoDoor = e.target.checked;
   saveGameSettings();
 });
 document.getElementById("sel-quality").addEventListener("change", e => {

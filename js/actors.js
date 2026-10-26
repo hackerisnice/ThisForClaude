@@ -38,7 +38,9 @@ const player = {
   // 投掷物
   throwBag: { frag: 0, smoke: 0, stun: 0, molotov: 0 },
   throwSel: "frag",
-  aimingThrow: false,
+  vault: null,          // 正在翻越（路径与进度）
+  throwEquipped: false, // 投掷物拿在手上（枪收起来了）
+  aimingThrow: false,   // 已拉保险 / 点燃，松开开火键就扔
   throwCook: 0, // 拔销后已经过去的秒数（捏雷）
   lastThrowTime: 0
 };

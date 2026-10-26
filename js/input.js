@@ -5,7 +5,10 @@
 // 11. 触控与键鼠绑定
 // ============================================================================
 function startTrigger() {
-  if (player.phase !== "ground" || player.aimingThrow) return;
+  if (player.phase !== "ground") return;
+  // 手上拿着投掷物：按下开火键 = 拉保险 / 点燃
+  if (player.throwEquipped) { beginThrowAim(); return; }
+  if (player.aimingThrow) return;
   const wep = player.weapons[player.activeSlot];
   if (!wep) { fireCurrentWeapon(); return; }
 
@@ -22,6 +25,7 @@ function startTrigger() {
 }
 
 function stopTrigger() {
+  if (player.aimingThrow) releaseThrow(); // 松开开火键 = 扔出
   player.isFiring = false;
   player.consecutiveShots = 0;
 }
@@ -50,6 +54,14 @@ function touchLookAccel(dx, dy, dtMs) {
   return 0.72 + 0.48 * smoothstep(0.1, 1.4, speed);
 }
 
+// 拉着保险时手指拖到“✕ 取消投掷”上
+const throwCancelEl = document.getElementById("btn-throw-cancel");
+function overThrowCancel(x, y) {
+  if (!player.aimingThrow || throwCancelEl.style.display === "none") return false;
+  const r = throwCancelEl.getBoundingClientRect();
+  return x > r.left - 12 && x < r.right + 12 && y > r.top - 12 && y < r.bottom + 12;
+}
+
 function bindFireDragButton(btnId) {
   const btn = document.getElementById(btnId);
   let touchId = null, lastX = 0, lastY = 0, lastT = 0;
@@ -69,7 +81,10 @@ function bindFireDragButton(btnId) {
       if (t.identifier === touchId) {
         const dx = t.clientX - lastX, dy = t.clientY - lastY;
         lastX = t.clientX; lastY = t.clientY;
-        applyLookDelta(dx, dy, TOUCH_LOOK_BASE, touchLookAccel(dx, dy, e.timeStamp - lastT));
+        // 拖到取消键上时不再转视角，按钮亮起提示“松手即取消”
+        const armed = overThrowCancel(t.clientX, t.clientY);
+        throwCancelEl.classList.toggle("armed", armed);
+        if (!armed) applyLookDelta(dx, dy, TOUCH_LOOK_BASE, touchLookAccel(dx, dy, e.timeStamp - lastT));
         lastT = e.timeStamp;
       }
     }
@@ -77,9 +92,11 @@ function bindFireDragButton(btnId) {
 
   const endFn = e => {
     for (let i = 0; i < e.changedTouches.length; i++) {
-      if (e.changedTouches[i].identifier === touchId) {
-        touchId = null; btn.classList.remove("pressing"); stopTrigger();
-      }
+      const t = e.changedTouches[i];
+      if (t.identifier !== touchId) continue;
+      touchId = null; btn.classList.remove("pressing");
+      if (player.aimingThrow && (e.type === "touchcancel" || overThrowCancel(t.clientX, t.clientY))) cancelThrowAim(e.type !== "touchcancel");
+      stopTrigger();
     }
   };
   btn.addEventListener("touchend", endFn);
@@ -88,59 +105,12 @@ function bindFireDragButton(btnId) {
 bindFireDragButton("btn-fire-left");
 bindFireDragButton("btn-fire-right");
 
-// 投掷键：按住 = 拔销瞄准（显示引信倒计时与抛物线，手指可以拖动转视角调整），松手 = 扔出；
-// 按住期间旁边出现“✕ 取消投掷”：手指拖到上面再松开、或用另一根手指点它，都会取消这次投掷
-(function bindThrowButton() {
-  const btn = document.getElementById("btn-throw");
-  const cancelBtn = document.getElementById("btn-throw-cancel");
-  let touchId = null, lastX = 0, lastY = 0, lastT = 0;
-  const overCancel = (x, y) => {
-    if (cancelBtn.style.display === "none") return false;
-    const r = cancelBtn.getBoundingClientRect();
-    return x > r.left - 12 && x < r.right + 12 && y > r.top - 12 && y < r.bottom + 12;
-  };
-  btn.addEventListener("touchstart", e => {
-    e.preventDefault(); e.stopPropagation();
-    if (touchId !== null) return;
-    const t = e.changedTouches[0];
-    touchId = t.identifier; lastX = t.clientX; lastY = t.clientY; lastT = e.timeStamp;
-    btn.classList.add("pressing");
-    beginThrowAim();
-  }, { passive: false });
-  btn.addEventListener("touchmove", e => {
-    e.preventDefault(); e.stopPropagation();
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      const t = e.changedTouches[i];
-      if (t.identifier !== touchId) continue;
-      const dx = t.clientX - lastX, dy = t.clientY - lastY;
-      lastX = t.clientX; lastY = t.clientY;
-      // 拖到取消键上时不再转视角，按钮亮起提示“松手即取消”
-      const armed = overCancel(t.clientX, t.clientY);
-      cancelBtn.classList.toggle("armed", armed);
-      if (!armed) applyLookDelta(dx, dy, TOUCH_LOOK_BASE, touchLookAccel(dx, dy, e.timeStamp - lastT));
-      lastT = e.timeStamp;
-    }
-  }, { passive: false });
-  const endFn = e => {
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      const t = e.changedTouches[i];
-      if (t.identifier !== touchId) continue;
-      touchId = null;
-      btn.classList.remove("pressing");
-      if (e.type === "touchcancel") cancelThrowAim();
-      else if (overCancel(t.clientX, t.clientY)) cancelThrowAim(true);
-      else releaseThrow();
-    }
-  };
-  btn.addEventListener("touchend", endFn);
-  btn.addEventListener("touchcancel", endFn);
-  // 桌面端鼠标点按
-  btn.addEventListener("mousedown", e => { e.stopPropagation(); beginThrowAim(); });
-  btn.addEventListener("mouseup", e => { e.stopPropagation(); releaseThrow(); });
-  // 取消键：另一根手指直接点
-  cancelBtn.addEventListener("touchstart", e => { e.preventDefault(); e.stopPropagation(); cancelThrowAim(true); }, { passive: false });
-  cancelBtn.addEventListener("mousedown", e => { e.stopPropagation(); cancelThrowAim(true); });
-})();
+// 投掷键：点一下把投掷物拿到手上（再点一下收起、切回枪）；拿着时按住开火键拉保险，松手扔出。
+// 拉着保险时出现“✕ 取消投掷”：开火键上的手指拖过去再松开、或用另一根手指点它，都会把保险插回去
+bindInstantTouchButton("btn-throw", toggleThrowEquip);
+bindInstantTouchButton("btn-door", interactNearestDoor);
+throwCancelEl.addEventListener("touchstart", e => { e.preventDefault(); e.stopPropagation(); cancelThrowAim(true); }, { passive: false });
+throwCancelEl.addEventListener("mousedown", e => { e.stopPropagation(); cancelThrowAim(true); });
 
 let lookTouchId = null, lookLastX = 0, lookLastY = 0, lookLastT = 0;
 renderer.domElement.addEventListener("touchstart", e => {
@@ -234,14 +204,9 @@ function bindInstantTouchButton(btnId, actionFn) {
   el.addEventListener("click", trigger);
 }
 
-bindInstantTouchButton("btn-jump", () => {
-  if (player.phase === "ground" && player.velY === 0) {
-    player.stance = "stand";
-    player.velY = 6.8;
-  }
-});
+bindInstantTouchButton("btn-jump", jumpOrVault); // 对着矮墙 / 窗户按就是翻越
 bindInstantTouchButton("btn-ads", () => {
-  if (player.aimingThrow) return;
+  if (player.throwEquipped) return;
   player.reopenADSAfterBolt = false;
   player.isADS = !player.isADS;
   updateScopeState();
@@ -266,6 +231,8 @@ bindInstantTouchButton("btn-heal-quick", () => {
 });
 
 bindInstantTouchButton("slot-wep-0", () => {
+  // 拿着投掷物时点枪位：收起投掷物、拿出这把枪
+  if (player.throwEquipped) { unequipThrowable(); if (player.activeSlot === 0) return; }
   if (player.activeSlot === 0) {
     cycleWeaponFireMode(0);
   } else {
@@ -274,6 +241,7 @@ bindInstantTouchButton("slot-wep-0", () => {
   }
 });
 bindInstantTouchButton("slot-wep-1", () => {
+  if (player.throwEquipped) { unequipThrowable(); if (player.activeSlot === 1) return; }
   if (player.activeSlot === 1) {
     cycleWeaponFireMode(1);
   } else {
@@ -282,6 +250,7 @@ bindInstantTouchButton("slot-wep-1", () => {
   }
 });
 bindInstantTouchButton("slot-firemode", () => {
+  if (player.throwEquipped) return;
   cycleWeaponFireMode(player.activeSlot);
 });
 
@@ -293,10 +262,12 @@ const keysPressed = {};
 window.addEventListener("keydown", e => {
   if (replayState.active) return; // 回放中只响应回放快捷键（见 replay.js）
   keysPressed[e.code] = true;
-  if (e.code === "KeyF") jumpFromPlane();
+  if (e.code === "KeyF") { if (player.phase === "ground") interactNearestDoor(); else jumpFromPlane(); }
   if (e.code === "KeyR") reloadActiveWeapon();
-  if (e.code === "Space" && player.phase === "ground" && player.velY === 0) {
-    player.stance = "stand"; player.velY = 6.8;
+  if (e.code === "Space" && !e.repeat) jumpOrVault();
+  if ((e.code === "Digit1" || e.code === "Digit2") && player.throwEquipped) {
+    unequipThrowable();
+    if (player.activeSlot === (e.code === "Digit1" ? 0 : 1)) return;
   }
   if (e.code === "Digit1") {
     if (player.activeSlot === 0) cycleWeaponFireMode(0);
@@ -308,7 +279,7 @@ window.addEventListener("keydown", e => {
   }
   if (e.code === "KeyB") cycleWeaponFireMode(player.activeSlot);
   if (e.code === "KeyM") toggleBigMap();
-  if (e.code === "KeyG" && !e.repeat) beginThrowAim();
+  if (e.code === "KeyG" && !e.repeat) toggleThrowEquip();
   if (e.code === "KeyX" && player.aimingThrow) cancelThrowAim(true);
   if (e.code === "KeyT") cycleThrowable();
   if (e.code === "KeyV" && !e.repeat) markerFromCrosshair();
@@ -321,7 +292,6 @@ window.addEventListener("keydown", e => {
 });
 window.addEventListener("keyup", e => {
   keysPressed[e.code] = false;
-  if (e.code === "KeyG") releaseThrow();
 });
 
 renderer.domElement.addEventListener("mousedown", e => {
@@ -333,7 +303,7 @@ renderer.domElement.addEventListener("mousedown", e => {
   if (e.button === 0) startTrigger();
   else if (e.button === 1) { e.preventDefault(); markerFromCrosshair(); }
   else if (e.button === 2 && player.aimingThrow) cancelThrowAim(true);
-  else if (e.button === 2 && !player.aimingThrow) { player.reopenADSAfterBolt = false; player.isADS = !player.isADS; updateScopeState(); }
+  else if (e.button === 2 && !player.throwEquipped) { player.reopenADSAfterBolt = false; player.isADS = !player.isADS; updateScopeState(); }
 });
 window.addEventListener("mouseup", e => { if (e.button === 0) stopTrigger(); });
 window.addEventListener("contextmenu", e => e.preventDefault());

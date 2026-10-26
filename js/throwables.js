@@ -302,7 +302,7 @@ function updateFire(dt, now) {
 
 // ---------------------------------------------------------------------------
 // AI 投掷：出手前先“在脑子里”模拟一遍抛物线（正常 / 高抛 / 低平三种出手），
-// 确认会落到目标附近、不会撞墙弹回自己脚下才扔。手雷捏一下让它落地约 1 秒后炸，震爆弹落地就炸
+// 确认会落到目标附近、不会撞墙弹回自己脚下才扔
 // ---------------------------------------------------------------------------
 function botPlanThrow(bot, id, tx, ty, tz) {
   const pos = bot.group.position;
@@ -338,13 +338,16 @@ function botThrowNade(bot, id, tx, ty, tz) {
   const d = playerRig.position.distanceTo(bot.group.position);
   if (d < 25) sfx.playPinPull();
   if (d < 45) sfx.playThrow();
-  const fuse = id === "frag" ? plan.T + 1.0 : (id === "stun" ? plan.T + 0.25 : undefined);
+  // AI 拉保险后捏一会儿再扔：手雷落地后 1~2 秒炸，震爆弹接近目标时空爆，烟雾弹落地就冒烟
+  const fuse = id === "frag" ? plan.T + 1.0 + Math.random() : (id === "stun" ? plan.T + 0.25 : (id === "smoke" ? plan.T + 0.5 : undefined));
   spawnThrowable(id, plan.origin, plan.vel, bot.name, false, fuse);
   return true;
 }
 
 // ---------------------------------------------------------------------------
-// 玩家投掷：按住投掷键瞄准（显示抛物线与落点圈，可拖动转视角），松手扔出
+// 玩家投掷：点 💣 把投掷物拿到手上（枪收起来）→ 按住开火键拉保险（燃烧瓶是点燃），开始倒计时、显示抛物线 →
+// 松开开火键扔出，扔完自动切回枪。手雷拉保险后 6 秒爆炸，烟雾弹 / 震爆弹 5 秒（可以捏着等，捏太久会在手里炸），
+// 燃烧瓶点燃后不限时、撞到东西就燃。按住期间出现“✕ 取消投掷”：手指拖过去松开、或另一根手指点它，保险插回去不扔
 // ---------------------------------------------------------------------------
 const THROW_PREVIEW_POINTS = 60;
 const throwPreviewLine = new THREE.Line(
@@ -358,13 +361,25 @@ const throwPreviewRing = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.5, 24), n
 throwPreviewRing.rotation.x = -Math.PI / 2;
 throwPreviewRing.visible = false;
 scene.add(throwPreviewRing);
-// 手里握着的投掷物（第一人称，图层 1）
+
+// 第一人称：握着投掷物的手（图层 1，和枪模一样最后单独画，贴墙不穿模）；燃烧瓶点燃后瓶口有火苗
+const throwHandGroup = new THREE.Group();
 const throwHandMesh = new THREE.Mesh(throwableGeo("frag"), lootMergedMat);
-throwHandMesh.position.set(0.25, -0.22, -0.55);
 throwHandMesh.scale.setScalar(0.8);
-throwHandMesh.layers.set(1);
-throwHandMesh.visible = false;
-camera.add(throwHandMesh);
+const throwGlove = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.075, 0.11), new THREE.MeshLambertMaterial({ color: 0x1f211e }));
+throwGlove.position.set(0.012, -0.045, 0.02);
+const throwSleeve = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.3), new THREE.MeshLambertMaterial({ color: 0x4b5338 }));
+throwSleeve.position.set(0.04, -0.17, 0.1);
+throwSleeve.rotation.set(1.05, 0, -0.25);
+const throwFlame = new THREE.Sprite(new THREE.SpriteMaterial({ map: softDotTex, color: 0xff9a2a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+throwFlame.position.set(0, 0.165, 0);
+throwFlame.visible = false;
+throwHandGroup.add(throwHandMesh, throwGlove, throwSleeve, throwFlame);
+throwHandGroup.traverse(o => o.layers.set(1));
+throwHandGroup.scale.setScalar(0.7);
+throwHandGroup.visible = false;
+camera.add(throwHandGroup);
+const throwHandPose = { aim: 0, raise: 0 };
 
 function throwLaunch(id) {
   const dir = new THREE.Vector3();
@@ -379,9 +394,8 @@ function throwLaunch(id) {
   return { origin: start, vel };
 }
 
-// 引信：手雷 / 震爆弹拔销就开始倒计时（可以“捏雷”，在手里捏太久会炸在自己手上），
-// 烟雾弹出手后才计时，燃烧瓶撞到东西就燃
-const COOKABLE_THROWS = { frag: true, stun: true };
+// 引信：手雷 / 烟雾弹 / 震爆弹拉保险就开始倒计时，燃烧瓶点燃后不限时
+const COOKABLE_THROWS = { frag: true, smoke: true, stun: true };
 const throwHudEl = document.getElementById("throw-hud");
 const throwHudRing = document.getElementById("throw-hud-ring");
 const throwHudTime = document.getElementById("throw-hud-time");
@@ -397,8 +411,9 @@ function showThrowAimUI(on) {
   throwHudEl.dataset.key = "";
 }
 
-function beginThrowAim() {
-  if (player.phase !== "ground" || player.aimingThrow) return;
+// 拿出 / 收起投掷物（点 💣 或按 G）
+function equipThrowable() {
+  if (player.phase !== "ground" || player.throwEquipped) return;
   if ((player.throwBag[player.throwSel] || 0) <= 0) {
     const next = THROW_ORDER.find(k => player.throwBag[k] > 0);
     if (!next) { showToast("没有投掷物"); return; }
@@ -407,27 +422,49 @@ function beginThrowAim() {
   if (player.isADS) { player.isADS = false; player.reopenADSAfterBolt = false; updateScopeState(); }
   if (player.casting && player.casting.title.includes("💊")) cancelCastProgress();
   player.isFiring = false;
-  player.aimingThrow = true;
-  player.throwCook = 0;
+  player.burstRemaining = 0;
+  player.throwEquipped = true;
   throwHandMesh.geometry = throwableGeo(player.throwSel);
-  throwHandMesh.visible = true;
-  showThrowAimUI(true);
-  sfx.playPinPull();
+  throwHandPose.raise = 0;
+  throwHandGroup.visible = true;
+  sfx.playBoltAction();
+  updateAllHUD();
+}
+function unequipThrowable() {
+  if (player.aimingThrow) cancelThrowAim(false);
+  if (!player.throwEquipped) return;
+  player.throwEquipped = false;
+  throwHandGroup.visible = false;
+  updateAllHUD();
+}
+function toggleThrowEquip() {
+  if (player.throwEquipped) unequipThrowable(); else equipThrowable();
 }
 
-// 剩余引信（只对可以捏雷的手雷 / 震爆弹有意义）
+// 按住开火键：拉保险（燃烧瓶：点燃）
+function beginThrowAim() {
+  if (player.phase !== "ground" || !player.throwEquipped || player.aimingThrow) return;
+  if ((player.throwBag[player.throwSel] || 0) <= 0) { unequipThrowable(); return; }
+  player.aimingThrow = true;
+  player.throwCook = 0;
+  showThrowAimUI(true);
+  if (player.throwSel === "molotov") sfx.playIgnite(0, 0); else sfx.playPinPull();
+  updateAllHUD();
+}
+
+// 剩余引信（燃烧瓶不限时）
 function throwFuseLeft() {
   return Math.max(0, THROWABLES_DATA[player.throwSel].fuse - player.throwCook);
 }
 
 function endThrowAim() {
   player.aimingThrow = false;
-  throwHandMesh.visible = false;
   throwPreviewLine.visible = false;
   throwPreviewRing.visible = false;
   showThrowAimUI(false);
 }
 
+// 松开开火键：扔出去，然后切回枪
 function releaseThrow() {
   if (!player.aimingThrow) return;
   endThrowAim();
@@ -437,64 +474,60 @@ function releaseThrow() {
   player.throwBag[id]--;
   player.lastThrowTime = performance.now();
   sfx.playThrow();
-  // 捏过的雷出手后只剩剩余引信
+  // 拉过保险的雷出手后只剩剩余引信
   spawnThrowable(id, origin, vel, "你 (Player)", true, COOKABLE_THROWS[id] ? Math.max(0.05, throwFuseLeft()) : undefined);
   if (player.throwBag[id] <= 0) {
     const next = THROW_ORDER.find(k => player.throwBag[k] > 0);
     if (next) player.throwSel = next;
   }
-  updateAllHUD();
+  unequipThrowable();
 }
 
-// 不扔出、把保险插回去（点“取消投掷” / 阵亡 / 打开背包时）
+// 不扔出、把保险插回去（点“取消投掷” / 阵亡 / 打开背包时）；投掷物还拿在手上
 function cancelThrowAim(byUser) {
   if (!player.aimingThrow) return;
   endThrowAim();
-  if (byUser) showToast("已取消投掷");
+  if (byUser) showToast(player.throwSel === "molotov" ? "已掐灭燃烧瓶" : "已插回保险");
+  updateAllHUD();
 }
 
-// 捏雷捏太久：在自己手里炸开
+// 捏太久：在自己手里炸开（烟雾弹就在脚下冒烟）
 function throwExplodeInHand() {
   const id = player.throwSel;
   endThrowAim();
   player.throwBag[id] = Math.max(0, (player.throwBag[id] || 0) - 1);
   const p = new THREE.Vector3(playerRig.position.x, player.feetY + 0.9, playerRig.position.z);
   spawnThrowable(id, p, new THREE.Vector3(0, 0, 0), "你 (Player)", true, 0);
-  showToast(id === "frag" ? "💥 手雷捏太久，在手里炸了！" : "⚡ 震爆弹在手里炸开了！");
-  updateAllHUD();
+  showToast(id === "frag" ? "💥 手雷捏太久，在手里炸了！" : (id === "stun" ? "⚡ 震爆弹在手里炸开了！" : "💨 烟雾弹在手里放烟了"));
+  unequipThrowable();
 }
 
 function cycleThrowable() {
   const owned = THROW_ORDER.filter(k => player.throwBag[k] > 0);
   if (!owned.length) { showToast("没有投掷物"); return; }
+  // 拉着保险时换种类：先把保险插回去
+  if (player.aimingThrow) cancelThrowAim(false);
   const i = owned.indexOf(player.throwSel);
   player.throwSel = owned[(i + 1) % owned.length];
-  if (player.aimingThrow) {
-    // 换了一颗：重新拔销，倒计时从头开始
-    throwHandMesh.geometry = throwableGeo(player.throwSel);
-    player.throwCook = 0;
-    sfx.playPinPull();
-  }
+  if (player.throwEquipped) { throwHandMesh.geometry = throwableGeo(player.throwSel); throwHandPose.raise = 0.4; }
   sfx.playBoltAction();
   updateAllHUD();
 }
 
-// 投掷瞄准的倒计时界面
+// 倒计时界面
 function updateThrowHud() {
   const id = player.throwSel, data = THROWABLES_DATA[id];
   let time, frac = 1, tip;
+  const releaseTip = IS_MOBILE ? "松开开火键投掷 · 拖到 ✕ 取消" : "松开左键投掷 · 右键 / X 取消";
   const danger = COOKABLE_THROWS[id] && throwFuseLeft() < 1.2;
   if (COOKABLE_THROWS[id]) {
     const left = throwFuseLeft();
     time = left.toFixed(1);
     frac = left / data.fuse;
-    tip = IS_MOBILE ? "松手投掷 · 拖到 ✕ 取消" : "松开 G 投掷 · 右键 / X 取消";
-  } else if (id === "smoke") {
-    time = data.fuse.toFixed(1);
-    tip = `出手 ${data.fuse} 秒后放烟 · ${IS_MOBILE ? "拖到 ✕ 取消" : "右键 / X 取消"}`;
+    tip = releaseTip;
   } else {
     time = "🔥";
-    tip = `撞到东西即燃 · ${IS_MOBILE ? "拖到 ✕ 取消" : "右键 / X 取消"}`;
+    tip = "已点燃 · 撞到东西即燃 · " + releaseTip;
   }
   const key = id + "|" + time + "|" + danger;
   if (throwHudEl.dataset.key === key) return;
@@ -507,8 +540,27 @@ function updateThrowHud() {
   throwHudRing.style.background = `conic-gradient(${danger ? "#ff3b2f" : "#ffd000"} ${deg}deg, rgba(255,255,255,0.14) ${deg}deg)`;
 }
 
-// 瞄准中每帧：捏雷计时、倒计时界面、抛物线预览（画到第一次落地或空爆的位置）
+// 手的姿势：拿着时放在右下方，拉保险后举到耳边准备扔；燃烧瓶点燃后火苗跳动
+function updateThrowHand(dt, now) {
+  if (!throwHandGroup.visible) return;
+  const P = throwHandPose;
+  P.aim += ((player.aimingThrow ? 1 : 0) - P.aim) * Math.min(1, dt * 10);
+  P.raise = Math.min(1, P.raise + dt * 4);
+  const r = 1 - (1 - P.raise) * (1 - P.raise), a = P.aim;
+  const bob = Math.sin(now * 0.002) * 0.006;
+  throwHandGroup.position.set(0.2 + 0.05 * a, -0.2 + 0.08 * a - 0.2 * (1 - r) + bob, -0.55 + 0.04 * a);
+  throwHandGroup.rotation.set(0.15 - 0.5 * a, -0.15 * a, 0.08 * a);
+  const lit = player.aimingThrow && player.throwSel === "molotov";
+  throwFlame.visible = lit;
+  if (lit) {
+    const f = 0.07 + 0.025 * Math.sin(now * 0.03) + 0.015 * Math.sin(now * 0.071);
+    throwFlame.scale.set(f, f * 1.6, 1);
+  }
+}
+
+// 每帧：手的动画；拉着保险时计时、倒计时界面、抛物线预览（画到第一次落地或空爆的位置）
 function updateThrowAim(dt) {
+  updateThrowHand(dt, performance.now());
   if (!player.aimingThrow) return;
   const id = player.throwSel;
   if (COOKABLE_THROWS[id]) {

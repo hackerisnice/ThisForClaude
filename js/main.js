@@ -118,7 +118,11 @@ function animate() {
     }
   }
 
-  if (player.phase === "ground") {
+  let playerMoving = !!player.vault;
+  if (player.phase === "ground" && player.vault) {
+    // 翻越中：按翻越动画移动（不受摇杆和重力影响）
+    updateVault(dt);
+  } else if (player.phase === "ground") {
     // 防卡墙兜底：被空投箱砸中等极端情况下自动挤出（正常时只是一次碰撞查询）
     pushOutOfColliders(playerRig.position, 0.48, player.feetY);
 
@@ -128,7 +132,8 @@ function animate() {
     if (keysPressed["KeyA"]) mx = -1;
     if (keysPressed["KeyD"]) mx = 1;
 
-    if (mx !== 0 || mz !== 0) {
+    playerMoving = mx !== 0 || mz !== 0;
+    if (playerMoving) {
       if (player.casting && player.casting.title.includes("💊")) cancelCastProgress();
       const boostSpeed = player.boost > 60 ? 1.12 : 1.0;
       const stanceSpeed = player.stance === "stand" ? 6.8 : (player.stance === "crouch" ? 4.4 : 2.3);
@@ -141,7 +146,9 @@ function animate() {
         .addScaledVector(right, mx * speed);
 
       const px0 = playerRig.position.x, pz0 = playerRig.position.z;
+      collideWithDoors = true; // 关着的门挡玩家
       movePlayerWithCornerAssist(playerRig.position, moveDelta.x, moveDelta.z, 0.48, player.feetY);
+      collideWithDoors = false;
       // 脚步声：按实际移动距离计步（站立跑动 / 蹲走 / 匍匐的步幅与音量不同）
       if (player.velY === 0) {
         player.stepAccum += Math.hypot(playerRig.position.x - px0, playerRig.position.z - pz0);
@@ -154,6 +161,8 @@ function animate() {
         }
       }
     }
+
+    updatePlayerDoorPrompt(playerMoving);
 
     // 竖直方向：跟随脚下表面（楼梯坡道连续爬升、小台阶直接迈上），悬空则受重力下落
     const gx = playerRig.position.x, gz = playerRig.position.z;
@@ -176,6 +185,9 @@ function animate() {
     }
     player.eyeH += (STANCE_EYE[player.stance] - player.eyeH) * Math.min(1, dt * 10);
     playerRig.position.y = player.feetY + player.eyeH;
+    updateVaultHint(now);
+  }
+  if (player.phase === "ground") {
 
     const curWep = player.weapons[player.activeSlot];
     if (curWep && now >= player.boltLockedUntil) {
@@ -208,7 +220,7 @@ function animate() {
     fpGunGroup.position.z += (restZ - fpGunGroup.position.z) * 14 * dt;
 
     // 跑动晃枪 + 转视角时枪身惯性滞后（只影响枪模显示，不影响准星与弹道）；开镜时晃动大幅减弱
-    const movingNow = mx !== 0 || mz !== 0;
+    const movingNow = playerMoving;
     gunBobPhase += dt * (movingNow ? (player.stance === "stand" ? 12.5 : 8.5) : 1.6);
     const bobAmp = (movingNow ? (player.stance === "stand" ? 0.018 : 0.012) : 0.0025) * (1 - adsE * 0.85);
     const dYaw = angleDiff(yaw, lastSwayYaw), dPitch = pitch - lastSwayPitch;
@@ -378,6 +390,8 @@ function animate() {
   updateThrowAim(dt);
   // 远处的静态合批块整块隐藏（地图变大后视野外的城镇不再提交绘制）
   cullStaticBatches();
+  updateDoors(dt);
+  if (player.phase !== "ground" && doorBtnText) updatePlayerDoorPrompt(false);
   // 录像：最近 16 秒战场（用于淘汰回放）
   replayRecordTick(dt);
 
@@ -410,7 +424,7 @@ function renderFrame(elapsed) {
   renderer.clear();
   camera.layers.set(0);
   renderer.render(scene, camera);
-  if (((fpGunGroup.visible && fpGunGroup.children.length > 0) || throwHandMesh.visible) && player.phase === "ground") {
+  if (((fpGunGroup.visible && fpGunGroup.children.length > 0) || throwHandGroup.visible) && player.phase === "ground") {
     renderer.clearDepth();
     camera.layers.set(1);
     renderer.render(scene, camera);

@@ -130,6 +130,19 @@ class SoundEngine {
     this.noiseBurst(1.6, "lowpass", 1600, 0.8, 0.9 * v, pan, 1.6, 120);
     this.thump(55, 0.7, 0.9 * v, pan);
   }
+  // 开门：木门轴吱呀一声；关门：门板撞上门框的闷响
+  playDoor(open, dist, pan) {
+    this.init();
+    const v = Math.max(0, 1 - dist / 45);
+    if (v < 0.01) return;
+    if (open) {
+      this.noiseBurst(0.42, "bandpass", 480, 7, 0.16 * v, pan, 0.42, 1250);
+      this.noiseBurst(0.05, "bandpass", 2400, 2, 0.08 * v, pan, 0.05);
+    } else {
+      this.thump(95, 0.12, 0.28 * v, pan);
+      this.noiseBurst(0.1, "lowpass", 900, 0.8, 0.14 * v, pan, 0.1);
+    }
+  }
   playThrow() { this.init(); this.noiseBurst(0.18, "bandpass", 1300, 0.8, 0.12, 0, 0.18, 500); }
   playPinPull() {
     this.init();

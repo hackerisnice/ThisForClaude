@@ -152,23 +152,72 @@ function buildStairFlight(x0, x1, zA, zB, yb, yt, risesSouth) {
   if (risesSouth) addCollider(x0, x1, zA + run * frac, zB, yb, yb + blockH);
   else addCollider(x0, x1, zA, zB - run * frac, yb, yb + blockH);
 }
-function buildStairCore(ix0, zA, zB, floors, color) {
+// toRoof：平顶楼再加一段从顶层通到屋顶的楼梯（屋顶开口，三面有护栏，出口一面敞开）
+function buildStairCore(ix0, zA, zB, floors, color, toRoof = false) {
   const lanes = [[ix0, ix0 + STAIR_LANE_W], [ix0 + STAIR_LANE_W + STAIR_DIV, ix0 + 2 * STAIR_LANE_W + STAIR_DIV]];
   const coreX1 = lanes[1][1];
   const run = zB - zA;
   const H = floors * FLOOR_H;
   addSolidBox(ix0 + STAIR_LANE_W + STAIR_DIV / 2, H / 2, (zA + zB) / 2, STAIR_DIV, H, run, color, { skipBottom: true });
   addSolidBox(coreX1 + 0.08, H / 2, (zA + zB) / 2, 0.16, H, run, color, { skipBottom: true });
-  for (let f = 0; f < floors - 1; f++) {
+  const flights = toRoof ? floors : floors - 1;
+  for (let f = 0; f < flights; f++) {
     const L = f % 2;
     const [x0, x1] = lanes[L];
-    const yt = floorY(f + 1);
+    const roof = f === floors - 1;
+    const yt = roof ? H + 0.2 : floorY(f + 1);
     buildStairFlight(x0, x1, zA, zB, floorY(f), yt, L === 0);
     // 上一层楼梯井口护栏（在本段楼梯低端那一头，防止从井口掉下去）
     const railZ = L === 0 ? zA : zB;
     addSolidBox((x0 + x1) / 2, yt + 0.5, railZ, x1 - x0, 1.0, 0.1, 0x3a3532, { los: false, aoBase: yt, ao: false });
+    if (roof) {
+      // 屋顶开口两侧的护栏
+      addSolidBox(x0 + 0.05, yt + 0.5, (zA + zB) / 2, 0.1, 1.0, run, 0x3a3532, { los: false, aoBase: yt, ao: false });
+      addSolidBox(x1 - 0.05, yt + 0.5, (zA + zB) / 2, 0.1, 1.0, run, 0x3a3532, { los: false, aoBase: yt, ao: false });
+    }
   }
-  return { lanes, zA, zB, coreX1 };
+  return { lanes, zA, zB, coreX1, roofLane: toRoof ? (floors - 1) % 2 : -1 };
+}
+
+// 从矩形里挖掉一个矩形洞，返回剩下的（最多 4 块）矩形 [x0, z0, x1, z1]
+function rectMinusHole(X0, Z0, X1, Z1, hx0, hz0, hx1, hz1) {
+  return [[X0, Z0, X1, hz0], [X0, hz1, X1, Z1], [X0, hz0, hx0, hz1], [hx1, hz0, X1, hz1]]
+    .filter(r => r[2] - r[0] > 0.05 && r[3] - r[1] > 0.05);
+}
+
+// 单层平顶房：贴着东墙（东边没地方就西墙）的室外楼梯 + 顶端平台，女儿墙在平台处留口子走上屋顶。
+// 返回女儿墙缺口所在的那一侧与 z 范围
+function buildExteriorStair(cx, cz, w, d, roofY, sides) {
+  const run = Math.min(5.6, d - 2.2), land = 1.4, laneW = 1.4;
+  if (run < 4) return null;
+  for (const side of sides) {
+    const inner = cx + side * (w / 2 + 0.32), outer = inner + side * laneW;
+    const lx0 = Math.min(inner, outer), lx1 = Math.max(inner, outer);
+    const Z0 = cz - d / 2 + 0.2, zR = Z0 + land, zE = zR + run;
+    if (isRectReserved(lx0 - 0.15, Z0 - 0.15, lx1 + 0.15, zE + 0.4, 0) || roadEdgeDistance((lx0 + lx1) / 2, (Z0 + zE) / 2, 12) < 1.5) continue;
+    // 从南往北爬升的坡道（复用楼梯段：台阶外观 + 坡道 + 子弹代理 + 坡道下方实心区）
+    buildStairFlight(lx0, lx1, zR, zE, 0, roofY, false);
+    // 顶端平台（与屋顶挑檐重叠一点，走过去不会掉缝）
+    const px0 = side > 0 ? cx + w / 2 + 0.25 : lx0, px1 = side > 0 ? lx1 : cx - w / 2 - 0.25;
+    addSolidBox((px0 + px1) / 2, roofY - 0.1, (Z0 + zR) / 2, px1 - px0, 0.2, land, 0x596066, { key: "wood", collider: false, ao: false });
+    addWalkRect(px0, Z0, px1, zR, roofY, roofY - 0.2);
+    addCollider(lx0, lx1, Z0, zR, 0, 1.3); // 平台下面不能钻
+    // 外侧护栏（坡道 + 平台）与平台北侧护栏
+    const rx = side > 0 ? lx1 - 0.04 : lx0 + 0.04;
+    addSolidBox(rx, (roofY + 1.0) / 2, (Z0 + zE) / 2, 0.08, roofY + 1.0, zE - Z0, 0x3a3532, { los: false, shoot: false, ao: false, visual: false });
+    addVisualBox(rx, roofY + 0.95, (Z0 + zR) / 2, 0.08, 0.08, land, 0x3a3532, "plaster", { ao: false });
+    const sl = Math.atan2(roofY, run);
+    addVisualBox(rx, roofY / 2 + 0.95, (zR + zE) / 2, 0.08, 0.08, Math.hypot(run, roofY), 0x3a3532, "plaster", { ao: false, rotX: sl });
+    addSolidBox((lx0 + lx1) / 2, roofY + 0.5, Z0 + 0.04, lx1 - lx0, 1.0, 0.08, 0x3a3532, { los: false, ao: false, aoBase: roofY });
+    // 立柱
+    [Z0 + 0.1, zR, zR + run * 0.5].forEach(z => {
+      const top = z <= zR ? roofY - 0.2 : roofY * (1 - (z - zR) / run);
+      addSolidBox(rx, top / 2, z, 0.12, top, 0.12, 0x596066, { los: false, ao: false, skipBottom: true });
+    });
+    reserveRect(lx0, Z0, lx1, zE);
+    return { side, z0: Z0, z1: zR, zE, lx0, lx1 };
+  }
+  return null;
 }
 
 // 高大单层建筑（仓库 / 谷仓 / 体育馆）的钢架平台：贴南墙一整排、深 3 米、与二楼同高，
@@ -218,9 +267,10 @@ function buildBuilding(o) {
 
   // 楼梯井（两层及以上）
   let stairs = null;
+  const flatRoof = o.roof !== "gable" && o.roof !== "none";
   if (floors >= 2) {
     const zA = cz - STAIR_RUN / 2, zB = cz + STAIR_RUN / 2;
-    stairs = buildStairCore(ix0, zA, zB, floors, color);
+    stairs = buildStairCore(ix0, zA, zB, floors, color, flatRoof);
   } else if (o.catwalk && wallH >= 5.8 && d >= 10.5) {
     // 仓库 / 谷仓 / 体育馆外面看有一排高窗，像有二楼：里面真的加一层平台，能上去
     stairs = buildCatwalk(cx, ix0, ix1, iz1);
@@ -258,7 +308,10 @@ function buildBuilding(o) {
     const nsCenters = w >= 12 ? [cx - w * 0.3, cx + w * 0.3] : (w >= 9 ? [cx - w * 0.28, cx + w * 0.28] : []);
     for (const side of [-1, 1]) {
       const ops = [];
-      if (f === 0 && o.doors !== false) ops.push({ a: cx - doorW / 2, b: cx + doorW / 2, bottom: 0, top: doorH });
+      if (f === 0 && o.doors !== false) {
+        ops.push({ a: cx - doorW / 2, b: cx + doorW / 2, bottom: 0, top: doorH });
+        if (o.kind !== "ruin") registerDoor(cx, cz + side * d / 2, doorW, doorH, -side); // 向屋里开的双开门
+      }
       else if (w >= 13 && o.windows !== false) ops.push(...winOps([cx], 1.6, wb, wt));
       if (o.windows !== false) ops.push(...winOps(nsCenters, 1.5, wb, wt));
       buildWall("x", cz + side * d / 2, cx - w / 2 - t / 2, cx + w / 2 + t / 2, yBase, h, t, color, ops, { key });
@@ -285,21 +338,39 @@ function buildBuilding(o) {
   }
 
   // 屋顶
-  let roofY = null;
+  let roofY = null, ext = null;
   if (o.roof === "gable") {
     addSolidBox(cx, H, cz, w, 0.2, d, o.floorColor || 0x6a5442, { key: "wood", collider: false, ao: false });
     buildGableRoof(cx, cz, w, d, H + 0.1, o.roofColor || pickColor(ROOF_COLORS), color);
   } else if (o.roof !== "none") {
-    // 平屋顶 + 女儿墙（可站立；跳伞可以落在楼顶）
+    // 平屋顶 + 女儿墙（可站立；跳伞可以落在楼顶）。多层楼：楼梯通到屋顶，屋顶上开一个楼梯口；
+    // 单层房：外墙边有室外楼梯上屋顶，女儿墙在楼梯平台处留口子
     const rc = o.roofColor || 0x4a413b;
-    addSolidBox(cx, H + 0.05, cz, w + 0.6, 0.3, d + 0.6, rc, { collider: false, ao: false });
     roofY = H + 0.2;
-    addWalkRect(cx - w / 2 - 0.3, cz - d / 2 - 0.3, cx + w / 2 + 0.3, cz + d / 2 + 0.3, roofY, H - 0.1);
+    const X0 = cx - w / 2 - 0.3, X1 = cx + w / 2 + 0.3, Z0 = cz - d / 2 - 0.3, Z1 = cz + d / 2 + 0.3;
+    const rl = stairs && stairs.roofLane >= 0 ? stairs.lanes[stairs.roofLane] : null;
+    const roofRects = rl ? rectMinusHole(X0, Z0, X1, Z1, rl[0], stairs.zA, rl[1], stairs.zB) : [[X0, Z0, X1, Z1]];
+    roofRects.forEach(([a, b, c, e]) => {
+      addSolidBox((a + c) / 2, H + 0.05, (b + e) / 2, c - a, 0.3, e - b, rc, { collider: false, ao: false });
+      addWalkRect(a, b, c, e, roofY, H - 0.1);
+    });
+    // 有侧门通道连着别的楼的那一侧不放室外楼梯
+    const extSides = [1, -1].filter(sd => !(o.sideOpenings || []).some(so => so.side === (sd > 0 ? "east" : "west")));
+    ext = floors === 1 && H <= 4 && o.windows !== false && o.kind !== "ruin" ? buildExteriorStair(cx, cz, w, d, roofY, extSides) : null;
     const pc = 0x5a514a;
     addSolidBox(cx, roofY + 0.3, cz - d / 2 - 0.18, w + 0.6, 0.6, 0.25, pc, { ao: false, skipBottom: true });
     addSolidBox(cx, roofY + 0.3, cz + d / 2 + 0.18, w + 0.6, 0.6, 0.25, pc, { ao: false, skipBottom: true });
-    addSolidBox(cx - w / 2 - 0.18, roofY + 0.3, cz, 0.25, 0.6, d + 0.1, pc, { ao: false, skipBottom: true });
-    addSolidBox(cx + w / 2 + 0.18, roofY + 0.3, cz, 0.25, 0.6, d + 0.1, pc, { ao: false, skipBottom: true });
+    for (const side of [-1, 1]) {
+      const px = cx + side * (w / 2 + 0.18);
+      if (ext && ext.side === side) {
+        // 楼梯平台处的女儿墙缺口
+        const za = cz - d / 2 - 0.05, zb = cz + d / 2 + 0.05;
+        if (ext.z0 - za > 0.05) addSolidBox(px, roofY + 0.3, (za + ext.z0) / 2, 0.25, 0.6, ext.z0 - za, pc, { ao: false, skipBottom: true });
+        addSolidBox(px, roofY + 0.3, (ext.z1 + zb) / 2, 0.25, 0.6, zb - ext.z1, pc, { ao: false, skipBottom: true });
+      } else {
+        addSolidBox(px, roofY + 0.3, cz, 0.25, 0.6, d + 0.1, pc, { ao: false, skipBottom: true });
+      }
+    }
     // 屋顶空调外机/水箱（掩体）
     if (o.roofProps !== false && w > 11 && Math.random() < 0.7) {
       addSolidBox(cx + w * 0.2, roofY + 0.5, cz + d * 0.15, 1.6, 1.0, 1.0, 0x8a8f94, { aoBase: roofY });
@@ -316,7 +387,7 @@ function buildBuilding(o) {
   }
 
   const rec = {
-    cx, cz, w, d, floors: levels, kind: o.kind || "house", poi: o.poi || null, roofY, stairs,
+    cx, cz, w, d, floors: levels, kind: o.kind || "house", poi: o.poi || null, roofY, stairs, extStair: ext,
     northDoor: { x: cx, z: cz - d / 2 - 2.0 },
     southDoor: { x: cx, z: cz + d / 2 + 2.0 }
   };

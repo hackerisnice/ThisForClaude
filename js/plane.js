@@ -108,7 +108,7 @@ function spawnAirdropEvent() {
     lootEntries: null // 落地后生成的物资（AI 据此判断空投还有没有东西）
   });
 
-  showToast("✈️ 空投补给箱已投放在安全区附近，注意抬头查看红色浓烟！");
+  showToast("✈️ 空投来了，留意红色烟雾");
 }
 
 // 返回这次生成的全部物资条目

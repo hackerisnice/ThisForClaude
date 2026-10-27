@@ -62,6 +62,8 @@ function ensureDoorMesh() {
   doorMesh.frustumCulled = false; // r128 的实例网格不按实例算包围球
   doorMesh.castShadow = true;
   doorMesh.receiveShadow = true;
+  // 实例颜色缓冲要按满容量预先建好（setColorAt 懒创建时按当前 count 分配，count 为 0 时会建出空缓冲，整批门都画不出来）
+  doorMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(doors.length * 2 * 3), 3);
   doorMesh.count = 0;
   doors.forEach(d => { d.slot = -1; d.color = new THREE.Color().setHSL(0.07 + Math.random() * 0.03, 0.38 + Math.random() * 0.15, 0.24 + Math.random() * 0.08); });
   scene.add(doorMesh);
@@ -236,16 +238,29 @@ function nearestDoor(x, z, feetY, maxD) {
 }
 
 // AI 走到门前自动推门（不会顺手关门：门开着说明有人来过）
+// （不管是在搜东西、巡逻、跑毒、追人还是交火走位，只要要从门口过就先推开）
 function botOpenDoorsAhead(bot, now) {
   if (now < (bot.nextDoorCheck || 0)) return;
-  bot.nextDoorCheck = now + 250;
-  if (bot.curSpeed < 0.5) return;
+  bot.nextDoorCheck = now + 150;
   const p = bot.group.position;
-  const d = nearestDoor(p.x, p.z, p.y, 2.4);
+  const d = nearestDoor(p.x, p.z, p.y, 3.2);
   if (!d || d.open) return;
+  const side = p.z - d.z;
+  const gap = Math.hypot(Math.max(0, Math.abs(p.x - d.x) - d.hw), side);
+  // 1) 已经贴到门上了（在动或者想动）
+  if (gap < 1.4 && (bot.curSpeed > 0.15 || bot.navPath)) { setDoorOpen(d, true, true); return; }
+  // 2) 接下来 1 秒左右要穿过门洞
+  const L = Math.max(1.6, bot.curSpeed * 1.1 + 0.8);
   const hx = Math.sin(bot.curHeading), hz = Math.cos(bot.curHeading);
-  const tx = d.x - p.x, tz = d.z - p.z, tl = Math.hypot(tx, tz) || 1;
-  if ((hx * tx + hz * tz) / tl > 0.2 || tl < 1.3) setDoorOpen(d, true, true);
+  const ez = p.z + hz * L;
+  if (side * (ez - d.z) <= 0 && Math.abs(hz) > 0.05) {
+    const xc = p.x + hx * L * ((d.z - p.z) / (hz * L));
+    if (Math.abs(xc - d.x) < d.hw + 0.6) { setDoorOpen(d, true, true); return; }
+  }
+  // 3) 寻路的下一个路点 / 要去的地方在门另一边
+  const wp = bot.navPath && bot.navPath[bot.navIdx];
+  const goal = wp || bot.lastMoveGoal;
+  if (goal && gap < 3.2 && side * (goal.z - d.z) < 0 && Math.abs(goal.x - d.x) < d.hw + 2.5) setDoorOpen(d, true, true);
 }
 
 // 玩家：靠近门时出现“开门 / 关门”按钮；开着“自动开门”时走向关着的门会自动推开

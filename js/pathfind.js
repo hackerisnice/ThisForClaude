@@ -6,44 +6,60 @@ const NAV_CELL = 1.0;          // 网格边长（米）
 const NAV_RADIUS = 0.5;        // 按 AI 身体半径判断格子能不能站
 const NAV_MAX_SPAN = 120;      // 一次搜索的区域最大边长（米），目标再远就先走到区域边上
 const NAV_MAX_EXPAND = 12000;  // 一次搜索最多展开的格子数
-const navWalkCache = new Map();
+const navLevelCaches = new Map(); // 每一层一个“格子能不能站”的缓存
 let navCacheColliders = -1;
 let navSearchesThisFrame = 0;  // 每帧最多算一次，避免卡顿（主循环每帧清零）
 
-// 这个格子能不能站人（结果缓存；场景碰撞体变化时整体清空）
-function navCellFree(ix, iz) {
-  if (navCacheColliders !== wallColliders2D.length) { navWalkCache.clear(); navCacheColliders = wallColliders2D.length; }
+// 地面层用 1 米格；楼上（屋里窄、家具多）用 0.5 米格，只在同一层楼板上搜
+function navCellSize(fy) { return fy < 1 ? NAV_CELL : 0.5; }
+function navFloorAt(x, z, fy) { return Math.abs(getGroundHeight(x, z, fy + 0.35) - fy) < 0.3; }
+
+// 这个格子能不能站人（结果缓存；场景碰撞体变化时整体清空）。fy = 所在楼层的地板高度（地面层为 0）
+function navCellFree(ix, iz, fy = 0) {
+  if (navCacheColliders !== wallColliders2D.length) { navLevelCaches.clear(); navCacheColliders = wallColliders2D.length; }
+  const lv = fy < 1 ? 0 : Math.round(fy * 10);
+  let cache = navLevelCaches.get(lv);
+  if (!cache) { cache = new Map(); navLevelCaches.set(lv, cache); }
   const k = gridKey(ix, iz);
-  let v = navWalkCache.get(k);
+  let v = cache.get(k);
   if (v === undefined) {
-    const x = ix * NAV_CELL, z = iz * NAV_CELL;
-    let free = Math.abs(x) < MAP_LIMIT - 2 && Math.abs(z) < MAP_LIMIT - 2 && !isPointBlocked2D(x, z, NAV_RADIUS, 0);
-    // 河面只能走桥
-    if (free && Math.abs(z - RIVER_Z) < RIVER_HALF + 1 && !BRIDGE_XS.some(bx => Math.abs(x - bx) < 8.5)) free = false;
+    const c = navCellSize(fy), x = ix * c, z = iz * c;
+    let free;
+    if (fy < 1) {
+      free = Math.abs(x) < MAP_LIMIT - 2 && Math.abs(z) < MAP_LIMIT - 2 && !isPointBlocked2D(x, z, NAV_RADIUS, 0);
+      // 河面只能走桥
+      if (free && Math.abs(z - RIVER_Z) < RIVER_HALF + 1 && !BRIDGE_XS.some(bx => Math.abs(x - bx) < 8.5)) free = false;
+    } else {
+      // 楼上：脚下要有这一层的楼板（不能走进楼梯井 / 走出窗外），身边不碰墙和家具
+      free = navFloorAt(x, z, fy) && !isPointBlocked2D(x, z, 0.44, fy);
+    }
     v = free ? 1 : 0;
-    navWalkCache.set(k, v);
+    cache.set(k, v);
   }
   return v === 1;
 }
 
-// 两点之间能不能直接走过去（每 0.5 米采样一次）
-function navLineClear(ax, az, bx, bz) {
-  const d = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(d / 0.5));
+// 两点之间能不能直接走过去（每 0.4 米采样一次：所在格子能站，而且这个点本身真的不碰墙——
+// 只看格子中心的话，斜线会擦着门框 / 墙角过去，AI 就卡在门边）
+function navLineClear(ax, az, bx, bz, fy = 0) {
+  const c = navCellSize(fy);
+  const d = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(d / (fy < 1 ? 0.4 : 0.25)));
   for (let i = 1; i <= n; i++) {
     const x = ax + (bx - ax) * i / n, z = az + (bz - az) * i / n;
-    if (!navCellFree(Math.round(x / NAV_CELL), Math.round(z / NAV_CELL))) return false;
+    if (!navCellFree(Math.round(x / c), Math.round(z / c), fy) || isPointBlocked2D(x, z, 0.46, fy)) return false;
+    if (fy >= 1 && !navFloorAt(x, z, fy)) return false;
   }
   return true;
 }
 
 // 最近的可站格子（目标贴着墙 / 在家具旁边时用）
-function navNearestFree(ix, iz, maxR) {
-  if (navCellFree(ix, iz)) return [ix, iz];
+function navNearestFree(ix, iz, maxR, fy = 0) {
+  if (navCellFree(ix, iz, fy)) return [ix, iz];
   for (let r = 1; r <= maxR; r++) {
     for (let dx = -r; dx <= r; dx++) {
       for (let dz = -r; dz <= r; dz++) {
         if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
-        if (navCellFree(ix + dx, iz + dz)) return [ix + dx, iz + dz];
+        if (navCellFree(ix + dx, iz + dz, fy)) return [ix + dx, iz + dz];
       }
     }
   }
@@ -51,15 +67,16 @@ function navNearestFree(ix, iz, maxR) {
 }
 
 // A*：返回拉直后的路点数组 [{x, z}, ...]（最后一个是终点或搜索区域边上朝向终点的点），走不通返回 null
-function findNavPath(sx, sz, gx, gz) {
+function findNavPath(sx, sz, gx, gz, fy = 0) {
+  const c = navCellSize(fy), margin = fy < 1 ? 15 : 6;
   let tx = gx, tz = gz;
   const dd = Math.hypot(gx - sx, gz - sz), maxD = NAV_MAX_SPAN - 30;
   if (dd > maxD) { tx = sx + (gx - sx) / dd * maxD; tz = sz + (gz - sz) / dd * maxD; }
-  const x0 = Math.floor((Math.min(sx, tx) - 15) / NAV_CELL), x1 = Math.ceil((Math.max(sx, tx) + 15) / NAV_CELL);
-  const z0 = Math.floor((Math.min(sz, tz) - 15) / NAV_CELL), z1 = Math.ceil((Math.max(sz, tz) + 15) / NAV_CELL);
+  const x0 = Math.floor((Math.min(sx, tx) - margin) / c), x1 = Math.ceil((Math.max(sx, tx) + margin) / c);
+  const z0 = Math.floor((Math.min(sz, tz) - margin) / c), z1 = Math.ceil((Math.max(sz, tz) + margin) / c);
   const W = x1 - x0 + 1, H = z1 - z0 + 1, N = W * H;
-  const s = navNearestFree(Math.round(sx / NAV_CELL), Math.round(sz / NAV_CELL), 3);
-  const g = navNearestFree(Math.round(tx / NAV_CELL), Math.round(tz / NAV_CELL), 4);
+  const s = navNearestFree(Math.round(sx / c), Math.round(sz / c), fy < 1 ? 3 : 4, fy);
+  const g = navNearestFree(Math.round(tx / c), Math.round(tz / c), fy < 1 ? 4 : 5, fy);
   if (!s || !g) return null;
   const inBox = (ix, iz) => ix >= x0 && ix <= x1 && iz >= z0 && iz <= z1;
   if (!inBox(s[0], s[1]) || !inBox(g[0], g[1])) return null;
@@ -107,9 +124,9 @@ function findNavPath(sx, sz, gx, gz) {
       const nx = cx + DIRS[d][0], nz = cz + DIRS[d][1];
       if (!inBox(nx, nz)) continue;
       const ni = idxOf(nx, nz);
-      if (closed[ni] || !navCellFree(nx, nz)) continue;
+      if (closed[ni] || !navCellFree(nx, nz, fy)) continue;
       // 斜着走不能切墙角
-      if (DIRS[d][2] > 1 && (!navCellFree(cx + DIRS[d][0], cz) || !navCellFree(cx, cz + DIRS[d][1]))) continue;
+      if (DIRS[d][2] > 1 && (!navCellFree(cx + DIRS[d][0], cz, fy) || !navCellFree(cx, cz + DIRS[d][1], fy))) continue;
       const ng = gScore[cur] + DIRS[d][2];
       if (ng < gScore[ni]) { gScore[ni] = ng; came[ni] = cur; push(ni, ng + hOf(nx, nz)); }
     }
@@ -119,14 +136,14 @@ function findNavPath(sx, sz, gx, gz) {
   const cells = [];
   for (let i = goal; i !== -1; i = came[i]) cells.push(i);
   cells.reverse();
-  const pts = cells.map(i => ({ x: (i % W + x0) * NAV_CELL, z: (((i / W) | 0) + z0) * NAV_CELL }));
+  const pts = cells.map(i => ({ x: (i % W + x0) * c, z: (((i / W) | 0) + z0) * c }));
   // 拉直：从当前点出发，能直接走到的最远路点之间的格子全部省掉
   const out = [];
   let ax = sx, az = sz, k = 0;
   while (k < pts.length - 1) {
     let far = k + 1;
     for (let j = pts.length - 1; j > k + 1; j--) {
-      if (navLineClear(ax, az, pts[j].x, pts[j].z)) { far = j; break; }
+      if (navLineClear(ax, az, pts[j].x, pts[j].z, fy)) { far = j; break; }
     }
     out.push(pts[far]);
     ax = pts[far].x; az = pts[far].z;
@@ -147,9 +164,17 @@ function navCrossesRiver(az, bz) {
 function botNavSteerPoint(bot, subGoal, finalGoal, speed, dt, allowPlan) {
   const pos = bot.group.position;
   bot.navCooldown = Math.max(0, (bot.navCooldown || 0) - dt);
-  const groundGoal = (finalGoal.y || 0) < 1 && !navCrossesRiver(pos.z, finalGoal.z);
+  // 楼上：只在同一层楼板上规划（去楼梯口 / 去本层的东西）；正在楼梯上、或者要去的点在别的楼层就交给楼梯逻辑
+  const upper = pos.y >= 1;
+  const groundGoal = !upper && (finalGoal.y || 0) < 1 && !navCrossesRiver(pos.z, finalGoal.z);
   const target = groundGoal ? finalGoal : subGoal;
-  if (!allowPlan || pos.y >= 1 || (target.y || 0) >= 1) { bot.navPath = null; bot.navTrack = null; return subGoal; }
+  let fy = 0;
+  if (upper) {
+    const b = getBuildingContainingPoint(pos.x, pos.z, -0.3);
+    fy = getGroundHeight(pos.x, pos.z, pos.y + 0.1);
+    if (!b || flightAt(b, pos) >= 0 || Math.abs((target.y || 0) - pos.y) > 0.6) { bot.navPath = null; bot.navTrack = null; return subGoal; }
+  }
+  if (!allowPlan || (!upper && (target.y || 0) >= 1)) { bot.navPath = null; bot.navTrack = null; return subGoal; }
   // 目标挪远了：旧路线作废
   if (bot.navPath && Math.hypot(bot.navPathGoal.x - target.x, bot.navPathGoal.z - target.z) > 5) bot.navPath = null;
   // 进度监测（盯着最终目标，而不是来回切换的门口子目标）
@@ -166,16 +191,16 @@ function botNavSteerPoint(bot, subGoal, finalGoal, speed, dt, allowPlan) {
   bot.navProbe = (bot.navProbe || 0) - dt;
   if (!bot.navPath && !want && bot.navProbe <= 0) {
     bot.navProbe = 1.0 + Math.random() * 0.3;
-    if (d > 6 && d < 110) {
+    if (d > (upper ? 1.5 : 6) && d < 110) {
       // 直线（不含终点那一小段）被挡住就提前规划
       const k = (d - 0.8) / d;
-      if (!navLineClear(pos.x, pos.z, pos.x + (target.x - pos.x) * k, pos.z + (target.z - pos.z) * k)) want = true;
+      if (!navLineClear(pos.x, pos.z, pos.x + (target.x - pos.x) * k, pos.z + (target.z - pos.z) * k, fy)) want = true;
     }
   }
-  if (want && !bot.navPath && speed > 0.5 && d > 2.5 && bot.navCooldown <= 0 && navSearchesThisFrame < 1) {
+  if (want && !bot.navPath && speed > 0.5 && d > (upper ? 1.2 : 2.5) && bot.navCooldown <= 0 && navSearchesThisFrame < 1) {
     navSearchesThisFrame++;
     bot.navWant = false;
-    const path = findNavPath(pos.x, pos.z, target.x, target.z);
+    const path = findNavPath(pos.x, pos.z, target.x, target.z, fy);
     if (path) {
       bot.navPath = path; bot.navIdx = 0;
       bot.navPathGoal = { x: target.x, z: target.z };
@@ -188,7 +213,14 @@ function botNavSteerPoint(bot, subGoal, finalGoal, speed, dt, allowPlan) {
   }
   if (bot.navPath) {
     let wp = bot.navPath[bot.navIdx];
-    while (wp && Math.hypot(wp.x - pos.x, wp.z - pos.z) < 1.1) { bot.navIdx++; wp = bot.navPath[bot.navIdx]; }
+    const reach = upper ? 0.5 : 1.1;
+    while (wp && Math.hypot(wp.x - pos.x, wp.z - pos.z) < reach) { bot.navIdx++; wp = bot.navPath[bot.navIdx]; }
+    // 被挤离了路线、下一个路点隔着墙了：这条路线作废，马上重算
+    bot.navCheck = (bot.navCheck || 0) - dt;
+    if (wp && bot.navCheck <= 0) {
+      bot.navCheck = 0.5;
+      if (!navLineClear(pos.x, pos.z, wp.x, wp.z, fy)) { bot.navPath = null; bot.navWant = true; bot.navCooldown = 0; wp = null; return groundGoal ? finalGoal : subGoal; }
+    }
     // 被挤离路线太远就重新算
     if (wp && Math.hypot(wp.x - pos.x, wp.z - pos.z) > 40) { bot.navPath = null; wp = null; }
     if (!wp) { bot.navPath = null; return groundGoal ? finalGoal : subGoal; }

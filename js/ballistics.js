@@ -250,10 +250,12 @@ function updateBulletTracers() {
   bulletTracerLines.visible = n > 0;
 }
 
-// 玩家移动速度（AI 打移动目标时预判提前量用）
+// 玩家移动速度（AI 打移动目标时预判提前量用）与平均帧间隔
 const playerVel = { x: 0, z: 0 };
+let frameDtAvg = 1 / 30;
 let _pvLastX = null, _pvLastZ = 0;
 function trackPlayerVelocity(dt) {
+  if (dt > 0) frameDtAvg += (Math.min(dt, 0.1) - frameDtAvg) * 0.1;
   const x = playerRig.position.x, z = playerRig.position.z;
   if (_pvLastX !== null && dt > 0) {
     const k = Math.min(1, dt * 6);

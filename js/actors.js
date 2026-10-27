@@ -238,8 +238,8 @@ function createAIBot(id) {
     aimPitch: 0,
     foeUntil: 0, foeY: 0, foeDist: 30,
     // 枪法：打移动目标给提前量的准确度、远距离抬枪补下坠的准确度（每个 AI 不一样）
-    leadSkill: 0.55 + Math.random() * 0.45,
-    dropSkill: 0.85 + Math.random() * 0.2,
+    leadSkill: 0.82 + Math.random() * 0.28,
+    dropSkill: 0.9 + Math.random() * 0.15,
     // 性格：好斗（主动搜人）、爱蹲点（阴人）、爱架狙（找高楼窗口远距离狙）
     aggr: Math.random(),
     camper: Math.random(),

@@ -170,7 +170,7 @@ function pickupLootObject(lootEntry) {
     const availSpace = player.maxCap - curWeight;
     const maxCanTake = Math.floor(availSpace / unitW);
     if (maxCanTake <= 0) {
-      showToast("⚠️ 背包容量已满！请先打开背包丢弃多余物品");
+      showToast("背包满了，先丢点东西");
       return;
     }
     const actualTake = Math.min(it.count, maxCanTake);

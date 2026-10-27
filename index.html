@@ -6,14 +6,15 @@
   <meta name="theme-color" content="#0a0c0e">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>PUBG 端游还原版 - 真实AI跳伞/触须避障寻路/战术走位</title>
+  <title>PUBG Lite</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <div id="portrait-warn">
-  <h2>📱 请将手机横屏游玩</h2>
-  <p style="margin-top:8px;color:#ccc;font-size:13px;">已实装：3.2km大地图（学校/遗迹/多层楼）、投掷物、脚步声、AI分散跳伞与上下楼寻路、实时阴影、自适应画质</p>
+  <div class="pw-phone"></div>
+  <h2>把手机横过来</h2>
+  <p>横屏后就能开始游戏</p>
 </div>
 
 <div id="canvas-container"></div>
@@ -177,7 +178,7 @@
 <div id="backpack-modal">
   <div class="bag-header">
     <div>
-      <strong style="color:#ffa500;font-size:14px;">🎒 战术背包 & 配件装配台</strong>
+      <strong style="color:#ffa500;font-size:14px;">🎒 背包</strong>
       <span id="bag-weight-header" style="font-size:11px;color:#00ff88;margin-left:10px;font-weight:bold;">容量: 25 / 150</span>
     </div>
     <button id="btn-close-bag" style="background:#d9381e;color:#fff;border:none;padding:4px 12px;border-radius:4px;font-weight:bold;font-size:11px;cursor:pointer;">关闭背包</button>
@@ -188,11 +189,11 @@
       <div id="bag-ground-list"></div>
     </div>
     <div class="bag-col">
-      <h4><span>🎒 背包物品 (可安装/使用/丢弃)</span></h4>
+      <h4><span>🎒 背包物品</span></h4>
       <div id="bag-inventory-list"></div>
     </div>
     <div class="bag-col">
-      <h4><span>🔫 已装备武器 (点击配件槽卸下)</span></h4>
+      <h4><span>🔫 武器（点配件可卸下）</span></h4>
       <div id="bag-weapons-panel"></div>
     </div>
   </div>

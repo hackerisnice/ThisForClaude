@@ -12,12 +12,12 @@ function botArmorReduction(bot, isHead) {
 // 各类武器的 AI 打法：每轮连发数、射击间隔、伤害系数、近/远距离单发命中率、最大交战距离、偏好距离、换弹时长
 // （步枪的整体秒伤与原版 AI 基本持平；喷子贴脸极痛但打不远；狙击单发伤害高但慢）
 const AI_WEAPON_PROFILE = {
-  AR:  { volley: 3, cdMin: 750,  cdMax: 1150, dmgMul: 0.30, hitNear: 0.136, hitFar: 0.08,  nearR: 25, farR: 135, maxRange: 135, prefRange: 32, reload: 2300 },
-  SMG: { volley: 4, cdMin: 600,  cdMax: 950,  dmgMul: 0.30, hitNear: 0.145, hitFar: 0.022, nearR: 15, farR: 70,  maxRange: 75,  prefRange: 16, reload: 2000 },
-  LMG: { volley: 5, cdMin: 800,  cdMax: 1200, dmgMul: 0.26, hitNear: 0.095, hitFar: 0.066, nearR: 25, farR: 135, maxRange: 135, prefRange: 38, reload: 4200 },
-  SG:  { volley: 1, cdMin: 950,  cdMax: 1400, dmgMul: 0.20, hitNear: 0.40,  hitFar: 0.0,   nearR: 7,  farR: 30,  maxRange: 30,  prefRange: 9,  reload: 3200 },
-  DMR: { volley: 1, cdMin: 850,  cdMax: 1300, dmgMul: 0.45, hitNear: 0.195, hitFar: 0.16,  nearR: 35, farR: 135, maxRange: 135, prefRange: 50, reload: 2800 },
-  SR:  { volley: 1, cdMin: 1900, cdMax: 2700, dmgMul: 0.60, hitNear: 0.22,  hitFar: 0.18,  nearR: 35, farR: 135, maxRange: 135, prefRange: 60, reload: 3600 }
+  AR:  { volley: 3, cdMin: 750,  cdMax: 1150, dmgMul: 0.26, hitNear: 0.136, hitFar: 0.08,  nearR: 25, farR: 135, maxRange: 135, prefRange: 32, reload: 2300 },
+  SMG: { volley: 4, cdMin: 600,  cdMax: 950,  dmgMul: 0.26, hitNear: 0.145, hitFar: 0.022, nearR: 15, farR: 70,  maxRange: 75,  prefRange: 16, reload: 2000 },
+  LMG: { volley: 5, cdMin: 800,  cdMax: 1200, dmgMul: 0.22, hitNear: 0.095, hitFar: 0.066, nearR: 25, farR: 135, maxRange: 135, prefRange: 38, reload: 4200 },
+  SG:  { volley: 1, cdMin: 950,  cdMax: 1400, dmgMul: 0.17, hitNear: 0.40,  hitFar: 0.0,   nearR: 7,  farR: 30,  maxRange: 30,  prefRange: 9,  reload: 3200 },
+  DMR: { volley: 1, cdMin: 850,  cdMax: 1300, dmgMul: 0.38, hitNear: 0.195, hitFar: 0.16,  nearR: 35, farR: 135, maxRange: 135, prefRange: 50, reload: 2800 },
+  SR:  { volley: 1, cdMin: 1900, cdMax: 2700, dmgMul: 0.51, hitNear: 0.22,  hitFar: 0.18,  nearR: 35, farR: 135, maxRange: 135, prefRange: 60, reload: 3600 }
 };
 // 武器在 近(<18m) / 中(<60m) / 远 距离的适用度，AI 据此决定切哪把枪
 const AI_RANGE_FIT = { SG: [1.0, 0.25, 0.0], SMG: [0.95, 0.6, 0.15], AR: [0.7, 1.0, 0.7], LMG: [0.6, 0.9, 0.75], DMR: [0.35, 0.8, 0.95], SR: [0.2, 0.6, 1.0] };
@@ -25,7 +25,7 @@ const AI_VS_AI_DMG = { AR: 1.0, SMG: 0.9, LMG: 1.0, SG: 1.0, DMR: 1.2, SR: 1.8 }
 const BOT_GUN_LENGTH = { AR: 1.0, SMG: 0.72, LMG: 1.15, SG: 1.05, DMR: 1.25, SR: 1.4 };
 const BOT_MED_CAP = [3, 5, 7, 9]; // 背包等级越高能带的药越多
 const BOT_NADE_CAP = { frag: 3, smoke: 2, stun: 2, molotov: 2 };   // 每种投掷物最多带几个
-const BOT_NADE_WANT = { frag: 0.9, smoke: 0.7, stun: 0.65, molotov: 0.75 };
+const BOT_NADE_WANT = { frag: 1.6, smoke: 1.0, stun: 1.0, molotov: 1.2 }; // 看到投掷物基本都会捡
 
 function botProfile(bot) {
   return AI_WEAPON_PROFILE[WEAPONS_DATA[bot.weaponKey].type] || AI_WEAPON_PROFILE.AR;
@@ -107,6 +107,10 @@ function botLootScore(bot, item) {
   return 0;
 }
 
+// 圈外（下一个安全区 0.85 倍半径以外）的东西不去捡：捡完又得跑回来
+function botLootOutsideZone(e) {
+  return Math.hypot(e.x - zoneState.cx, e.z - zoneState.cz) > zoneState.targetR * 0.85;
+}
 // 在 38 米内挑一个“需求度 / 距离”最划算的物资作为搜刮目标（每个 AI 约 1 秒扫描一次）
 function scanBotLootTarget(bot, now) {
   const bx = bot.group.position.x, bz = bot.group.position.z;
@@ -115,10 +119,13 @@ function scanBotLootTarget(bot, now) {
     const e = worldLootItems[i];
     const dx = e.x - bx, dz = e.z - bz;
     const d2 = dx * dx + dz * dz;
-    if (d2 > 1444 || (bot.badLoot && bot.badLoot.has(e))) continue;
+    if (d2 > 1444 || (bot.badLoot && bot.badLoot.has(e)) || botLootOutsideZone(e)) continue;
     const s = botLootScore(bot, e.item);
     if (s <= 0) continue;
-    const score = s / (1 + Math.sqrt(d2) / 10);
+    // 隔着楼层的东西算远一点（每差一层约等于多走 10 米），正在去拿的那件优先（不会楼上楼下来回跑）
+    const dy = Math.abs(e.y - bot.group.position.y);
+    let score = s / (1 + (Math.sqrt(d2) + dy * 3) / 10);
+    if (e === bot.lootTarget) score *= 1.35;
     if (score > bestScore) { bestScore = score; best = e; }
   }
   if (best !== bot.lootTarget) bot.lootTargetSince = now;
@@ -177,7 +184,7 @@ function botConsiderThrow(bot, now, distToPlayer, canSeePlayer, isAlerted) {
   if (now < bot.nextGrenadeTime) return false;
   const N = bot.nades, pos = bot.group.position;
   if (!(N.frag || N.smoke || N.stun || N.molotov)) return false;
-  if (player.phase === "ground" && canSeePlayer && isAlerted && bot.hp < 45 && N.smoke > 0 && distToPlayer > 12 && distToPlayer < 120) {
+  if (player.phase === "ground" && canSeePlayer && isAlerted && bot.hp < 60 && N.smoke > 0 && distToPlayer > 12 && distToPlayer < 120) {
     const dx = playerRig.position.x - pos.x, dz = playerRig.position.z - pos.z, dl = Math.hypot(dx, dz) || 1;
     if (botThrowNade(bot, "smoke", pos.x + dx / dl * 4.5, pos.y, pos.z + dz / dl * 4.5)) {
       bot.nextGrenadeTime = now + 9000 + Math.random() * 6000;
@@ -185,8 +192,19 @@ function botConsiderThrow(bot, now, distToPlayer, canSeePlayer, isAlerted) {
       return true;
     }
   }
+  // 正面对枪：玩家站着不动 / 蹲着打（12~32 米）时丢雷逼走位，躲在楼里就丢燃烧瓶
+  if (player.phase === "ground" && canSeePlayer && isAlerted && distToPlayer > 12 && distToPlayer < 32 &&
+      Math.hypot(playerVel.x, playerVel.z) < 2.5 && Math.random() < 0.22) {
+    const px = playerRig.position.x + (Math.random() - 0.5) * 1.5, pz = playerRig.position.z + (Math.random() - 0.5) * 1.5;
+    const inB = !!getBuildingContainingPoint(px, pz, -0.3);
+    const id = N.molotov > 0 && (inB || Math.random() < 0.3) ? "molotov" : (N.frag > 0 ? "frag" : null);
+    if (id && botThrowNade(bot, id, px, player.feetY + 0.1, pz)) {
+      bot.nextGrenadeTime = now + 9000 + Math.random() * 6000;
+      return true;
+    }
+  }
   const L = bot.lkp;
-  if (player.phase === "ground" && isAlerted && !canSeePlayer && L && now - L.t < 9000) {
+  if (player.phase === "ground" && (isAlerted || bot.tactic === "hunt") && !canSeePlayer && L && now - L.t < 15000) {
     const d = Math.hypot(L.x - pos.x, L.z - pos.z), dy = Math.abs(L.y - pos.y);
     const indoors = !!getBuildingContainingPoint(L.x, L.z, -0.3);
     const opts = [];
@@ -226,7 +244,7 @@ function botPickAirdrop(bot, now) {
     const ad = airdrops[i];
     if (!ad.landed && ad.crateGroup.position.y > ad.landY + 120) continue;
     if (ad.landed && (!ad.lootEntries || !ad.lootEntries.some(e => !e.gone && botLootScore(bot, e.item) > 0))) continue;
-    if (Math.hypot(ad.x - zoneState.cx, ad.z - zoneState.cz) > zoneState.curR - 15) continue;
+    if (Math.hypot(ad.x - zoneState.cx, ad.z - zoneState.cz) > Math.min(zoneState.curR - 15, zoneState.targetR * 0.9)) continue;
     const d = Math.hypot(ad.x - bx, ad.z - bz);
     if (d > 160 + 340 * bot.greed || d >= bestD) continue;
     best = ad; bestD = d;
@@ -370,6 +388,7 @@ function spawnBotMuzzleFlash(bot) {
 // AI 的瞄准方向：按玩家当前移动速度 × 子弹飞行时间给提前量、按下坠量抬枪（各自有技术误差），
 // 再加上由命中率换算出的瞄准散布（距离越远散布越大）。打不打得中由子弹真正飞到哪决定
 const BOT_HIT_R = 0.64; // 把命中率换算成散布时用的等效目标半径（米）
+const BOT_ACCURACY = 2.0; // AI 打玩家的命中率倍数（伤害系数相应调低，整体秒伤约为原来的 1.7 倍）
 function gaussRand() { return Math.sqrt(-2 * Math.log(Math.random() + 1e-9)) * Math.cos(Math.PI * 2 * Math.random()); }
 const _baU = new THREE.Vector3(), _baW = new THREE.Vector3();
 function botAimDirection(bot, muzzle, wId, hitP, dist, shotIdx) {
@@ -378,11 +397,14 @@ function botAimDirection(bot, muzzle, wId, hitP, dist, shotIdx) {
   const d = muzzle.distanceTo(tgt);
   let t = bulletFlightTime(d, v0, k);
   if (!isFinite(t)) t = d / v0 * 1.6;
-  const lead = bot.leadSkill * (0.8 + Math.random() * 0.4);
-  tgt.x += playerVel.x * t * lead;
-  tgt.z += playerVel.z * t * lead;
-  tgt.y += bulletDropAt(t) * bot.dropSkill * (0.92 + Math.random() * 0.16);
-  const p = Math.max(0.01, Math.min(0.95, hitP));
+  // 提前量 = 子弹飞行时间 + 一帧（子弹下一帧才和玩家做碰撞，那时玩家已经又走了一帧）
+  const lead = bot.leadSkill * (0.88 + Math.random() * 0.24);
+  const tl = t + frameDtAvg;
+  tgt.x += playerVel.x * tl * lead;
+  tgt.z += playerVel.z * tl * lead;
+  tgt.y += bulletDropAt(t) * bot.dropSkill * (0.94 + Math.random() * 0.12);
+  // 枪法：在原命中率基础上整体收紧散布（打不中也是擦着身子过去）
+  const p = Math.max(0.01, Math.min(0.85, hitP * BOT_ACCURACY));
   // 150 米外散布随距离放大（倍率越高放大得越晚）
   const farDiv = 150 * (1 + 0.14 * (botScopeZoom(bot) - 1));
   const sigma = BOT_HIT_R / Math.sqrt(-2 * Math.log(1 - p)) * Math.max(1, dist / farDiv) * (1 + 0.12 * shotIdx);
@@ -719,6 +741,9 @@ function updateAIBot(bot, dt, now, elapsed) {
     const distToSafeCenter = Math.hypot(bot.group.position.x - zoneState.cx, bot.group.position.z - zoneState.cz);
     const isOutsideSafe = distToSafeCenter > zoneState.targetR * 0.90;
     const isInBlueZone = distToSafeCenter > zoneState.curR;
+    // 跑毒要有回差：一旦开始往圈里跑，跑进 0.78 倍半径以内才停（不然在圈边上“跑毒 / 回头捡东西”来回抽搐）
+    if (isOutsideSafe || isInBlueZone) bot.zoneRun = true;
+    else if (distToSafeCenter < zoneState.targetR * 0.78) bot.zoneRun = false;
     const isAlerted = now < bot.alertUntil;
     const distToPlayer = bot.group.position.distanceTo(playerRig.position);
     const canSeePlayer = botCanSeePlayer(bot, distToPlayer, now, dt);
@@ -760,7 +785,7 @@ function updateAIBot(bot, dt, now, elapsed) {
       moveGoal = new THREE.Vector3(bot.group.position.x + Math.sin(now * 0.003 + bot.id) * 4, bot.group.position.y, bot.group.position.z + Math.cos(now * 0.0025 + bot.id) * 4);
       moveSpd = 1.4;
     // 1. 跑毒
-    } else if (isInBlueZone || (isOutsideSafe && !isAlerted)) {
+    } else if (isInBlueZone || (bot.zoneRun && !isAlerted)) {
       moveMode = "zone";
       // 跑毒：朝圈中心方向 45 米处定一个固定的目标点，走到了再定下一个（目标固定才能绕开房子）
       if (!bot.zoneGoal || Math.hypot(bot.zoneGoal.x - bot.group.position.x, bot.zoneGoal.z - bot.group.position.z) < 8 ||
@@ -844,7 +869,8 @@ function updateAIBot(bot, dt, now, elapsed) {
         for (let i = 0; i < worldLootItems.length; i++) {
           const entry = worldLootItems[i];
           if (entry.item.kind === "weapon" && !(bot.badLoot && bot.badLoot.has(entry))) {
-            const d = Math.hypot(entry.x - bot.group.position.x, entry.z - bot.group.position.z) + Math.abs(entry.y - bot.group.position.y) * 2;
+            // 圈外的枪排在后面（实在没有圈里的才去）
+            const d = Math.hypot(entry.x - bot.group.position.x, entry.z - bot.group.position.z) + Math.abs(entry.y - bot.group.position.y) * 2 + (botLootOutsideZone(entry) ? 400 : 0);
             if (d < bestD) { bestD = d; best = entry; }
           }
         }
@@ -943,6 +969,8 @@ function updateAIBot(bot, dt, now, elapsed) {
 
     // 执行 7向触须避障 + 房门导航移动（带转向/加减速惯性与个体速度差异）
     // 交火横移 / 躲雷 / 被闪时目标点跟着人动，不做绕路规划
+    bot.lastMoveGoal = moveGoal;
+    bot.moveMode = moveMode; bot.moveSpdWanted = moveSpd;
     const movedDist = steerAndMoveAI(bot, moveGoal, moveSpd * bot.speedMul, dt, moveMode !== "combat" && moveMode !== "flee" && moveMode !== "stunned");
     // 绕路也走不到（物资在封闭角落 / 别的楼层够不着）：记下来换个目标，不再原地死磕
     if (bot.navUnreachable) {

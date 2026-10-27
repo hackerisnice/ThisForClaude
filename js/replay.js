@@ -8,7 +8,7 @@ const RB_STRIDE = 30;   // 每个 AI 每帧记录的数值个数
 // AI 手里的枪 / 倍镜按编号记录（回放击杀者第一人称时还原它的开镜画面）
 const REPLAY_WEAPON_KEYS = Object.keys(WEAPONS_DATA);
 const REPLAY_SCOPE_KEYS = Object.keys(ATTACHMENTS_DATA).filter(k => ATTACHMENTS_DATA[k].slot === "scope");
-const RP_STRIDE = 15;   // 玩家每帧记录的数值个数
+const RP_STRIDE = 18;   // 玩家每帧记录的数值个数
 const REC_BOTS = aiPlayers.length;
 const STANCE_CODE = { stand: 0, crouch: 1, prone: 2 };
 const PHASE_CODE = { plane: 0, sky: 1, chute: 2, ground: 3, dead: 4 };
@@ -68,6 +68,10 @@ function writePlayerState(A, o) {
   const w = player.weapons[player.activeSlot];
   A[o + 13] = w && w.attachments && w.attachments.scope ? 1 : 0;
   A[o + 14] = player.isADS ? 1 : 0;
+  // 回放“我的第一人称”还原开镜画面：手里的枪、倍镜、开镜进度
+  A[o + 15] = w && !player.throwEquipped ? REPLAY_WEAPON_KEYS.indexOf(w.id) : -1;
+  A[o + 16] = w && w.attachments && w.attachments.scope ? REPLAY_SCOPE_KEYS.indexOf(w.attachments.scope) : -1;
+  A[o + 17] = adsAnim.t;
 }
 
 function replayRecordTick(dt) {
@@ -412,6 +416,8 @@ function entityAt(clip, id, t, out = _rpE) {
     out.fx = -Math.sin(yw); out.fz = -Math.cos(yw);
     out.pitch = A[oa + 4] + (A[ob + 4] - A[oa + 4]) * al;
     out.eye = [1.7, 1.15, 0.45][A[oa + 5]] || 1.7;
+    out.ads = A[oa + 17] + (A[ob + 17] - A[oa + 17]) * al;
+    out.wep = A[oa + 15]; out.scope = A[oa + 16];
     return out;
   }
   const bs = REC_BOTS * RB_STRIDE, oa = a * bs + id * RB_STRIDE, ob = b * bs + id * RB_STRIDE, A = clip.B;
@@ -700,8 +706,9 @@ function computeReplayCamera(clip, t, dt) {
   camera.rotation.set(pitch, yaw, 0);
   // 第一人称：藏起自己的身体（不然镜头在脑袋里、枪挡在眼前），按开镜状态缩放视野
   if (mode === "otherfp" && other) aiPlayers[otherId].group.visible = false;
-  updateReplayScope(other || me, mode === "otherfp" && !!other);
-  if (mode === "fp") rpCrossEl.style.display = "block";
+  // 第一人称（自己或对手）开镜时显示当时的倍镜 / 机瞄画面
+  if (mode === "fp") updateReplayScope(me, true);
+  else updateReplayScope(other || me, mode === "otherfp" && !!other);
 
   // 名字标签：我 + 对手（开镜缩放视野时同比缩小，保持屏幕上大小不变）
   const tagK = Math.tan(camera.fov * Math.PI / 360) / Math.tan(35 * Math.PI / 180);

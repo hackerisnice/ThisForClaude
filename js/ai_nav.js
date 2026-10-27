@@ -2,8 +2,12 @@
 // （所有脚本共享同一个全局作用域，按 index.html 里的顺序依次加载）
 
 // 楼梯导航辅助：第 f 段楼梯（从 f 层到 f+1 层）位于 lanes[f % 2]，0 号道向南(+z)爬升，1 号道向北(-z)爬升
+// 能走到的最高一层：平顶楼的楼梯通到屋顶，屋顶也算一层（AI 误走上屋顶也能自己下来）
+function navTopFloor(b) {
+  return b.floors - 1 + (b.stairs && b.stairs.roofLane >= 0 ? 1 : 0);
+}
 function floorOfY(b, y) {
-  return Math.max(0, Math.min(b.floors - 1, Math.round((y - 0.1) / FLOOR_H)));
+  return Math.max(0, Math.min(navTopFloor(b), Math.round((y - 0.1) / FLOOR_H)));
 }
 function stairLowApproach(b, f) {
   const st = b.stairs, L = f % 2, lane = st.lanes[L];
@@ -20,30 +24,39 @@ function flightAt(b, pos) {
   for (let L = 0; L < 2; L++) {
     if (pos.x < st.lanes[L][0] - 0.05 || pos.x > st.lanes[L][1] + 0.05) continue;
     const f = Math.floor((pos.y - 0.05) / FLOOR_H);
-    if (f >= 0 && f <= b.floors - 2 && f % 2 === L) return f;
+    if (f >= 0 && f <= navTopFloor(b) - 1 && f % 2 === L) return f;
   }
   return -1;
 }
 
-// 计算 AI 的下一个导航子目标（自动进出房门、上下楼梯、自动找桥过河）
-function computeAINavSubTarget(botPos, finalGoal) {
-  // 1. 跨河检测：如果 AI 与目标点分布在河流两侧，先导航到最近的跨河大桥
-  const nearSide = RIVER_Z - RIVER_HALF - 5, farSide = RIVER_Z + RIVER_HALF + 5;
-  if ((botPos.z < nearSide && finalGoal.z > farSide) || (botPos.z > farSide && finalGoal.z < nearSide)) {
-    let bestBx = BRIDGE_XS[0];
-    let minD = 99999;
-    BRIDGE_XS.forEach(bx => {
-      const d = Math.abs(botPos.x - bx);
-      if (d < minD) { minD = d; bestBx = bx; }
-    });
-    if (Math.abs(botPos.x - bestBx) > 8) {
-      return new THREE.Vector3(bestBx, 0, botPos.z < RIVER_Z ? RIVER_Z - 34 : RIVER_Z + 34);
-    }
-    return new THREE.Vector3(bestBx, 0, botPos.z < RIVER_Z ? RIVER_Z + 38 : RIVER_Z - 38);
-  }
+// 进出这栋楼走哪个门：从 from 走到门、再从门走到 to，总路程短的那个
+function pickDoorToward(b, from, to) {
+  const cost = door => Math.hypot(from.x - door.x, from.z - door.z) + Math.hypot(to.x - door.x, to.z - door.z);
+  return cost(b.northDoor) <= cost(b.southDoor) ? b.northDoor : b.southDoor;
+}
 
+// 计算 AI 的下一个导航子目标（自动进出房门、上下楼梯、自动找桥过河）
+// 跨河：AI 与目标在河两岸时，先去最近的桥（返回桥头 / 对岸的点，不用过河返回 null）
+function riverCrossingPoint(botPos, finalGoal) {
+  const nearSide = RIVER_Z - RIVER_HALF - 5, farSide = RIVER_Z + RIVER_HALF + 5;
+  if (!((botPos.z < nearSide && finalGoal.z > farSide) || (botPos.z > farSide && finalGoal.z < nearSide))) return null;
+  let bestBx = BRIDGE_XS[0];
+  let minD = 99999;
+  BRIDGE_XS.forEach(bx => {
+    const d = Math.abs(botPos.x - bx);
+    if (d < minD) { minD = d; bestBx = bx; }
+  });
+  if (Math.abs(botPos.x - bestBx) > 8) return new THREE.Vector3(bestBx, 0, botPos.z < RIVER_Z ? RIVER_Z - 34 : RIVER_Z + 34);
+  return new THREE.Vector3(bestBx, 0, botPos.z < RIVER_Z ? RIVER_Z + 38 : RIVER_Z - 38);
+}
+
+function computeAINavSubTarget(botPos, finalGoal) {
   const botHouse = getBuildingContainingPoint(botPos.x, botPos.z, -0.3);
   const goalHouse = getBuildingContainingPoint(finalGoal.x, finalGoal.z, 0.3);
+  // 1. 跨河：目标在河对岸就先去桥（但人在楼里要先下楼、出门——下面的楼层 / 出门逻辑优先）
+  const bridge = riverCrossingPoint(botPos, finalGoal);
+  if (bridge && !botHouse) return bridge;
+  const exitTarget = bridge || finalGoal;
 
   // 2. 楼层切换：目标在本楼另一层，或者人在楼上但要出门 → 先走楼梯
   if (botHouse && botHouse.stairs) {
@@ -61,19 +74,16 @@ function computeAINavSubTarget(botPos, finalGoal) {
     }
   }
 
-  // 3. 如果 AI 在某栋房子内部，而目标点在房子外面 -> 先走向最近的房门出去！
+  // 3. 如果 AI 在某栋房子内部，而目标点在房子外面 -> 先从朝着目标那一边的门出去
+  //   （按“走到门 + 门到目标”的总路程选门：目标在楼后面就走后门，不会出了前门又绕回来钻进同一栋楼）
   if (botHouse && botHouse !== goalHouse) {
-    const dNorth = Math.hypot(botPos.x - botHouse.northDoor.x, botPos.z - botHouse.northDoor.z);
-    const dSouth = Math.hypot(botPos.x - botHouse.southDoor.x, botPos.z - botHouse.southDoor.z);
-    const exitDoor = dNorth < dSouth ? botHouse.northDoor : botHouse.southDoor;
+    const exitDoor = pickDoorToward(botHouse, botPos, exitTarget);
     return new THREE.Vector3(exitDoor.x, 0, exitDoor.z);
   }
 
   // 4. 如果目标物资在某栋房子内部，而 AI 在房子外面 -> 先导航到该房子的正门/后门外，再进屋！
   if (goalHouse && botHouse !== goalHouse) {
-    const dNorth = Math.hypot(botPos.x - goalHouse.northDoor.x, botPos.z - goalHouse.northDoor.z);
-    const dSouth = Math.hypot(botPos.x - goalHouse.southDoor.x, botPos.z - goalHouse.southDoor.z);
-    const entryDoor = dNorth < dSouth ? goalHouse.northDoor : goalHouse.southDoor;
+    const entryDoor = pickDoorToward(goalHouse, botPos, finalGoal);
     // 如果还没走到门口（距离门口大于 1.8m 且偏离门框中轴线），先去门口对齐
     if (Math.hypot(botPos.x - entryDoor.x, botPos.z - entryDoor.z) > 1.8 && Math.abs(botPos.x - goalHouse.cx) > 1.1) {
       return new THREE.Vector3(entryDoor.x, 0, entryDoor.z);
@@ -131,25 +141,29 @@ function steerAndMoveAI(bot, desiredTarget, speed, dt, allowPlan = true) {
 
   let chosenAngle = desiredAngle;
   let foundClear = false;
-
+  const clearAt = (ang, d, up) => {
+    const x = pos.x + Math.sin(ang) * d, z = pos.z + Math.cos(ang) * d;
+    return !isPointBlocked2D(x, z, 0.44, Math.max(pos.y, getGroundHeight(x, z, pos.y + up)));
+  };
+  // 前方两个采样点（按该点的地面高度判断，楼梯坡道不会被当成墙）；远的那个不超过要去的点
+  // （目标就在家具旁边时，不会因为家具后面挡着就判定“此路不通”）
+  const nearD = bot.navPath ? 0.7 : 0.9, farD = Math.max(nearD, Math.min(1.7, distToSub));
   for (let i = 0; i < WHISKER_ANGLES.length; i++) {
     const testAngle = desiredAngle + WHISKER_ANGLES[i];
-    const vx = Math.sin(testAngle);
-    const vz = Math.cos(testAngle);
-    // 检测前方 0.9m 和 1.7m 两个采样点是否畅通（按该点的地面高度判断，楼梯坡道不会被当成墙）
-    const nx = pos.x + vx * 0.9, nz = pos.z + vz * 0.9, fx = pos.x + vx * 1.7, fz = pos.z + vz * 1.7;
-    const clearNear = !isPointBlocked2D(nx, nz, 0.44, Math.max(pos.y, getGroundHeight(nx, nz, pos.y + STEP_UP)));
-    const clearFar  = !isPointBlocked2D(fx, fz, 0.44, Math.max(pos.y, getGroundHeight(fx, fz, pos.y + STEP_UP * 2)));
-    if (clearNear && clearFar) {
+    if (clearAt(testAngle, nearD, STEP_UP) && clearAt(testAngle, farD, STEP_UP * 2)) {
       chosenAngle = testAngle;
       foundClear = true;
       break;
     }
   }
-
   if (!foundClear) {
-    // 极端死角时旋转脱困
-    chosenAngle = bot.moveHeading + Math.PI * 0.65;
+    // 四面都近：只看贴身 0.5 米哪边能挪；还不行就朝目标方向贴着墙滑，同时要求重算绕行路线
+    // （原来是原地转圈，在家具多的屋里会一直转）
+    for (let i = 0; i < WHISKER_ANGLES.length && !foundClear; i++) {
+      if (clearAt(desiredAngle + WHISKER_ANGLES[i], 0.5, STEP_UP)) { chosenAngle = desiredAngle + WHISKER_ANGLES[i]; foundClear = true; }
+    }
+    if (!foundClear) chosenAngle = desiredAngle;
+    if ((bot.navCooldown || 0) <= 0) { bot.navPath = null; bot.navWant = true; }
   }
 
   // 平滑转向 + 起步/刹车惯性：转身有角速度上限，速度渐变，告别“直角转弯、瞬间启停”
@@ -170,7 +184,7 @@ function steerAndMoveAI(bot, desiredTarget, speed, dt, allowPlan = true) {
     // 按时间累计卡住（约等于原版 60 帧下的 10 帧），低帧率手机上表现一致
     bot.stuckTime += dt;
     if (bot.stuckTime > 0.18) {
-      if (pos.y < 1 && bot.navCooldown <= 0) {
+      if (bot.navCooldown <= 0) {
         // 卡住了：在地面上就重新算一条绕行路线
         bot.navPath = null;
         bot.navWant = true;

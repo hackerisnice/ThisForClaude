@@ -16,6 +16,15 @@ body, html {
   background: #0d1015; color: #ffa500; flex-direction: column;
   align-items: center; justify-content: center; text-align: center; padding: 20px;
 }
+#portrait-warn h2 { font-size: 20px; letter-spacing: 2px; margin-top: 22px; }
+#portrait-warn p { margin-top: 8px; color: #9aa3ad; font-size: 13px; }
+/* 一台手机慢慢转成横屏的小动画 */
+.pw-phone {
+  width: 34px; height: 58px; border: 3px solid #ffa500; border-radius: 7px; position: relative;
+  animation: pwRotate 2.4s ease-in-out infinite;
+}
+.pw-phone::after { content: ""; position: absolute; left: 50%; bottom: 4px; width: 8px; height: 3px; margin-left: -4px; border-radius: 2px; background: #ffa500; }
+@keyframes pwRotate { 0%, 25% { transform: rotate(0deg); } 55%, 85% { transform: rotate(-90deg); } 100% { transform: rotate(0deg); } }
 @media screen and (orientation: portrait) { #portrait-warn { display: flex; } }
 
 #top-hud {

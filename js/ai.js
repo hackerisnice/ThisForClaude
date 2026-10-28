@@ -9,19 +9,18 @@ function botArmorReduction(bot, isHead) {
   return BOT_ARMOR_RED[isHead ? bot.helmLv : bot.vestLv] || 0.10;
 }
 
-// 各类武器的 AI 打法：每轮连发数、射击间隔、伤害系数、近/远距离单发命中率、最大交战距离、偏好距离、换弹时长
-// （步枪的整体秒伤与原版 AI 基本持平；喷子贴脸极痛但打不远；狙击单发伤害高但慢）
+// 各类武器的 AI 打法：每轮连发数、射击间隔、近/远距离单发命中率、最大交战距离、偏好距离、换弹时长
+// （伤害不在这里：AI 的子弹和玩家一样按枪的原始伤害、口径衰减、爆头倍数结算）
 const AI_WEAPON_PROFILE = {
-  AR:  { volley: 3, cdMin: 750,  cdMax: 1150, dmgMul: 0.26, hitNear: 0.136, hitFar: 0.08,  nearR: 25, farR: 135, maxRange: 135, prefRange: 32, reload: 2300 },
-  SMG: { volley: 4, cdMin: 600,  cdMax: 950,  dmgMul: 0.26, hitNear: 0.145, hitFar: 0.022, nearR: 15, farR: 70,  maxRange: 75,  prefRange: 16, reload: 2000 },
-  LMG: { volley: 5, cdMin: 800,  cdMax: 1200, dmgMul: 0.22, hitNear: 0.095, hitFar: 0.066, nearR: 25, farR: 135, maxRange: 135, prefRange: 38, reload: 4200 },
-  SG:  { volley: 1, cdMin: 950,  cdMax: 1400, dmgMul: 0.17, hitNear: 0.40,  hitFar: 0.0,   nearR: 7,  farR: 30,  maxRange: 30,  prefRange: 9,  reload: 3200 },
-  DMR: { volley: 1, cdMin: 850,  cdMax: 1300, dmgMul: 0.38, hitNear: 0.195, hitFar: 0.16,  nearR: 35, farR: 135, maxRange: 135, prefRange: 50, reload: 2800 },
-  SR:  { volley: 1, cdMin: 1900, cdMax: 2700, dmgMul: 0.51, hitNear: 0.22,  hitFar: 0.18,  nearR: 35, farR: 135, maxRange: 135, prefRange: 60, reload: 3600 }
+  AR:  { volley: 3, cdMin: 750,  cdMax: 1150, hitNear: 0.136, hitFar: 0.08,  nearR: 25, farR: 135, maxRange: 135, prefRange: 32, reload: 2300 },
+  SMG: { volley: 4, cdMin: 600,  cdMax: 950,  hitNear: 0.145, hitFar: 0.022, nearR: 15, farR: 70,  maxRange: 75,  prefRange: 16, reload: 2000 },
+  LMG: { volley: 5, cdMin: 800,  cdMax: 1200, hitNear: 0.095, hitFar: 0.066, nearR: 25, farR: 135, maxRange: 135, prefRange: 38, reload: 4200 },
+  SG:  { volley: 1, cdMin: 950,  cdMax: 1400, hitNear: 0.40,  hitFar: 0.0,   nearR: 7,  farR: 30,  maxRange: 30,  prefRange: 9,  reload: 3200 },
+  DMR: { volley: 1, cdMin: 850,  cdMax: 1300, hitNear: 0.195, hitFar: 0.16,  nearR: 35, farR: 135, maxRange: 135, prefRange: 50, reload: 2800 },
+  SR:  { volley: 1, cdMin: 1900, cdMax: 2700, hitNear: 0.22,  hitFar: 0.18,  nearR: 35, farR: 135, maxRange: 135, prefRange: 60, reload: 3600 }
 };
 // 武器在 近(<18m) / 中(<60m) / 远 距离的适用度，AI 据此决定切哪把枪
 const AI_RANGE_FIT = { SG: [1.0, 0.25, 0.0], SMG: [0.95, 0.6, 0.15], AR: [0.7, 1.0, 0.7], LMG: [0.6, 0.9, 0.75], DMR: [0.35, 0.8, 0.95], SR: [0.2, 0.6, 1.0] };
-const AI_VS_AI_DMG = { AR: 1.0, SMG: 0.9, LMG: 1.0, SG: 1.0, DMR: 1.2, SR: 1.8 };
 const BOT_GUN_LENGTH = { AR: 1.0, SMG: 0.72, LMG: 1.15, SG: 1.05, DMR: 1.25, SR: 1.4 };
 const BOT_MED_CAP = [3, 5, 7, 9]; // 背包等级越高能带的药越多
 const BOT_NADE_CAP = { frag: 3, smoke: 2, stun: 2, molotov: 2 };   // 每种投掷物最多带几个
@@ -333,12 +332,28 @@ function botCanSeePlayer(bot, d, now, dt) {
   return bot.spot >= 1;
 }
 
-function botShotDamage(wData, prof, dist) {
+// 一发子弹的基础伤害：步枪 / 冲锋枪 / 狙击就是枪的原始伤害（AKM 48、M416 41、Kar98k 79……）；
+// 霰弹枪一枪按距离算中了几颗弹丸（贴脸 7~8 颗，十几米三四颗），每颗再随距离衰减
+function botShotDamage(wData, dist) {
   if (wData.type === "SG") {
-    const falloff = 1 - smoothstep(6, 28, dist) * 0.8;
-    return Math.round(wData.pellets * wData.dmgPerPellet * prof.dmgMul * falloff * (0.8 + Math.random() * 0.4));
+    const frac = Math.max(0.12, Math.min(0.95, 1.05 - dist / 22));
+    const pellets = Math.max(1, Math.round(wData.pellets * frac * (0.8 + Math.random() * 0.4)));
+    return Math.round(pellets * wData.dmgPerPellet * bulletDamageScale(wData.id, dist));
   }
-  return Math.round(wData.dmg * prof.dmgMul * (0.85 + Math.random() * 0.3));
+  return Math.round(wData.dmg * (0.96 + Math.random() * 0.08));
+}
+// AI 互殴：一轮连发按命中几发结算（单发武器瞄得更稳），同样按枪的伤害、爆头、口径衰减、对方护甲
+function botVolleyDamageVsBot(bot, target, dist, shots) {
+  const w = WEAPONS_DATA[bot.weaponKey];
+  if (w.type === "SG") return Math.random() < 0.65 ? Math.round(botShotDamage(w, dist) * (1 - botArmorReduction(target, false))) : 0;
+  const p = shots > 1 ? 0.3 : 0.5;
+  let total = 0;
+  for (let s = 0; s < shots; s++) {
+    if (Math.random() > p) continue;
+    const head = Math.random() < 0.12;
+    total += w.dmg * (head ? headMultOf(bot.weaponKey) : 1) * bulletDamageScale(bot.weaponKey, dist) * (1 - botArmorReduction(target, head));
+  }
+  return Math.round(total);
 }
 
 // 换枪：按交战距离选最合适的枪（近距离切喷子/冲锋枪，远距离切狙击/连狙），没子弹的枪优先级降低
@@ -388,7 +403,7 @@ function spawnBotMuzzleFlash(bot) {
 // AI 的瞄准方向：按玩家当前移动速度 × 子弹飞行时间给提前量、按下坠量抬枪（各自有技术误差），
 // 再加上由命中率换算出的瞄准散布（距离越远散布越大）。打不打得中由子弹真正飞到哪决定
 const BOT_HIT_R = 0.64; // 把命中率换算成散布时用的等效目标半径（米）
-const BOT_ACCURACY = 2.0; // AI 打玩家的命中率倍数（伤害系数相应调低，整体秒伤约为原来的 1.7 倍）
+const BOT_ACCURACY = 2.0; // AI 打玩家的命中率倍数
 function gaussRand() { return Math.sqrt(-2 * Math.log(Math.random() + 1e-9)) * Math.cos(Math.PI * 2 * Math.random()); }
 const _baU = new THREE.Vector3(), _baW = new THREE.Vector3();
 function botAimDirection(bot, muzzle, wId, hitP, dist, shotIdx) {
@@ -407,7 +422,7 @@ function botAimDirection(bot, muzzle, wId, hitP, dist, shotIdx) {
   const p = Math.max(0.01, Math.min(0.85, hitP * BOT_ACCURACY));
   // 150 米外散布随距离放大（倍率越高放大得越晚）
   const farDiv = 150 * (1 + 0.14 * (botScopeZoom(bot) - 1));
-  const sigma = BOT_HIT_R / Math.sqrt(-2 * Math.log(1 - p)) * Math.max(1, dist / farDiv) * (1 + 0.12 * shotIdx);
+  const sigma = BOT_HIT_R / Math.sqrt(-2 * Math.log(1 - p)) * Math.max(1, dist / farDiv) * (1 + botSpreadGrowth(wId) * shotIdx);
   const dir = tgt.clone().sub(muzzle).normalize();
   _baU.set(-dir.z, 0, dir.x).normalize();
   _baW.crossVectors(dir, _baU).normalize();
@@ -426,11 +441,24 @@ function botShotSound(bot, isSupp, d) {
   if (d > 60) setTimeout(play, d / 343 * 1000); else play();
 }
 
+// 一轮打几发：只有点射 / 单发的步枪（M16A4 三连发、MK47 两连发）按点射打，其它按枪种
+function botVolleySize(bot, prof) {
+  const w = WEAPONS_DATA[bot.weaponKey];
+  if (w.type === "AR" && !w.modes.includes("auto")) return w.id === "mk47" ? 2 : 3;
+  return prof.volley;
+}
+// 一轮里后面几发越打越散：全自动按这把枪的垂直后坐力放大（Beryl 比 AUG 散得多），点射枪后坐力受控几乎不散
+function botSpreadGrowth(wId) {
+  const w = WEAPONS_DATA[wId];
+  if (!w.modes.includes("auto")) return 0.04;
+  return 0.12 * (w.vRec || 1.05) / 1.05;
+}
+
 // 向玩家打一轮连发：每发按射速间隔从枪口射出一颗真实弹头
 function botFireAtPlayer(bot, dist, now) {
   const wData = WEAPONS_DATA[bot.weaponKey];
   const prof = botProfile(bot);
-  const shots = Math.max(1, Math.min(prof.volley, bot.mags[bot.activeSlot]));
+  const shots = Math.max(1, Math.min(botVolleySize(bot, prof), bot.mags[bot.activeSlot]));
   const hitP = botHitChance(bot, prof, dist, true);
   const isSupp = bot.weaponAtts[bot.activeSlot].muzzle === "supp";
   const gap = Math.max(50, 60000 / wData.rpm);
@@ -443,7 +471,7 @@ function botFireAtPlayer(bot, dist, now) {
       if (!isSupp && d < 320) spawnBotMuzzleFlash(bot);
       const muzzle = botMuzzlePosition(bot, new THREE.Vector3());
       spawnBullet({ pos: muzzle, dir: botAimDirection(bot, muzzle, wKey, hitP, d, s), wId: wKey, owner: bot,
-        info: { dmg: botShotDamage(wData, prof, d), botName: bot.name, wName: wData.name } });
+        info: { dmg: botShotDamage(wData, d), botName: bot.name, wName: wData.name } });
     }, s * gap);
   }
   botAfterShots(bot, shots, dist, now);
@@ -1073,13 +1101,12 @@ function updateAIBot(bot, dt, now, elapsed) {
             bot.foeDist = otherBot.group.position.distanceTo(bot.group.position);
             if (distToPlayer < 320 && bot.weaponAtts[bot.activeSlot].muzzle !== "supp") spawnBotMuzzleFlash(bot);
             botShotSound(bot, bot.weaponAtts[bot.activeSlot].muzzle === "supp", distToPlayer);
-            // AI 互殴：伤害随武器类型变化，并扣除对方防弹衣减伤
+            // AI 互殴：按枪的伤害结算这一轮打中几发，子弹飞到了才扣血（见 ballistics.js）
             const od = otherBot.group.position.distanceTo(bot.group.position);
-            const typeMul = wType === "SG" ? (od < 15 ? 1.6 : 0.4) : (AI_VS_AI_DMG[wType] || 1);
-            // 子弹飞到了才扣血（见 ballistics.js）
-            scheduleBotHit(bot, otherBot, Math.round(36 * typeMul * (1 - botArmorReduction(otherBot, false)) / 0.9), od);
-            replayBotShot(bot, otherBot.group.position.x, otherBot.group.position.y + 1.2, otherBot.group.position.z, true, prof.volley);
-            botAfterShots(bot, prof.volley, od, now);
+            const vShots = botVolleySize(bot, prof);
+            scheduleBotHit(bot, otherBot, botVolleyDamageVsBot(bot, otherBot, od, vShots), od);
+            replayBotShot(bot, otherBot.group.position.x, otherBot.group.position.y + 1.2, otherBot.group.position.z, true, vShots);
+            botAfterShots(bot, vShots, od, now);
           }
         }
       }

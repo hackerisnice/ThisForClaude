@@ -13,6 +13,17 @@ const BULLET_SPEED = {
 };
 // 空气阻力（每秒速度衰减比例，按子弹口径）：霰弹丸衰减最快，大口径狙击弹最慢
 const AMMO_DRAG = { "5.56mm": 0.2, "7.62mm": 0.17, "9mm": 0.4, ".45ACP": 0.45, "12Gauge": 1.4, ".50BMG": 0.08 };
+// 伤害：每把枪基础伤害不同（data.js 里的 dmg），再按口径随距离衰减（手枪弹 / 霰弹掉得快，步枪弹慢，.50 几乎不掉）；
+// 爆头倍数按枪种。玩家打 AI、AI 打玩家用同一套规则
+const HEAD_MULT = { AR: 2.35, SMG: 2.1, LMG: 2.3, DMR: 2.35, SR: 2.5, SG: 1.5 };
+const AMMO_FALLOFF = { // [开始衰减的距离, 衰减到最低的距离, 最低剩余比例]
+  "9mm": [40, 160, 0.55], ".45ACP": [40, 160, 0.55], "5.56mm": [100, 450, 0.75], "7.62mm": [120, 500, 0.8], ".50BMG": [400, 900, 0.9], "12Gauge": [8, 40, 0.25]
+};
+function bulletDamageScale(wId, dist) {
+  const f = AMMO_FALLOFF[WEAPONS_DATA[wId].ammoType];
+  return f ? 1 - (1 - f[2]) * smoothstep(f[0], f[1], dist) : 1;
+}
+function headMultOf(wId) { return HEAD_MULT[WEAPONS_DATA[wId].type] || 2.35; }
 const BULLET_G = 9.8;
 const BULLET_MAX_TIME = 1.6;  // 最长飞行时间（秒）
 const BULLET_ZERO = 100;      // 瞄具归零距离（米）：100 米处弹着点正好在准星上
@@ -135,13 +146,13 @@ function botNearMiss(bot) {
 
 let lastPlayerHitSound = 0;
 // 玩家子弹打中 AI（原先开枪瞬间结算，现在子弹飞到才结算）
-function playerBulletHitBot(bot, isHead, point, info) {
+function playerBulletHitBot(bot, isHead, point, info, dist = 0) {
   if (!bot.alive) return;
   const base = WEAPONS_DATA[info.wId];
   const now = performance.now();
   const rawDmg = base.type === "SG" ? base.dmgPerPellet : base.dmg;
-  // 爆头按 AI 头盔等级减伤，打身体按防弹衣等级减伤
-  const finalDmg = Math.round(rawDmg * (isHead ? 2.35 : 1.0) * (1 - botArmorReduction(bot, isHead)));
+  // 爆头按 AI 头盔等级减伤，打身体按防弹衣等级减伤；远了按口径衰减
+  const finalDmg = Math.round(rawDmg * (isHead ? headMultOf(info.wId) : 1.0) * bulletDamageScale(info.wId, dist) * (1 - botArmorReduction(bot, isHead)));
   bot.hp -= finalDmg;
   player.totalDmg += finalDmg;
   spawnBloodEffect(point);
@@ -170,9 +181,11 @@ function finishBullet(b, hit) {
     const dd = hit.point.distanceTo(playerRig.position);
     if (dd < 60) sfx.playBounce(dd * 0.6, stereoPanFor(hit.point.x, hit.point.z));
   } else if (hit.kind === "bot") {
-    playerBulletHitBot(hit.bot, hit.head, hit.point, b.info);
+    playerBulletHitBot(hit.bot, hit.head, hit.point, b.info, b.from.distanceTo(hit.point));
   } else if (hit.kind === "player") {
-    damagePlayer(Math.round(b.info.dmg * (hit.head ? 1.35 : 1)), b.info.botName, b.info.wName, hit.head);
+    // AI 的子弹和玩家的一样：枪的原始伤害 × 爆头倍数 × 距离衰减（霰弹的中弹弹丸数已经按距离算进 dmg 里了）
+    const fall = WEAPONS_DATA[b.wId].type === "SG" ? 1 : bulletDamageScale(b.wId, b.from.distanceTo(hit.point));
+    damagePlayer(Math.round(b.info.dmg * (hit.head ? headMultOf(b.wId) : 1) * fall), b.info.botName, b.info.wName, hit.head);
   }
 }
 

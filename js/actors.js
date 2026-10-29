@@ -189,6 +189,25 @@ function buildSoldierModel(shirtColorOverride) {
   return { group, legL, legR, body, head, botGunMesh, scopeMesh, chuteMesh, legLPivot, legRPivot, upper, armLPivot, armRPivot, vestMesh, helmetMesh, pack, detailMeshes };
 }
 
+// 枪法：整体水平 sk（0 = 普通玩家，1 = 老手），各项再带一点个体差异
+function rollBotAimTraits() {
+  const sk = Math.random(), j = () => 0.9 + Math.random() * 0.2;
+  return {
+    reactMs: (380 - 160 * sk) * j(),                         // 看到人到开始动手：约 0.2~0.42 秒
+    perceptLag: (0.16 - 0.05 * sk) * j(),                    // 视觉延迟：看到的是 0.1~0.18 秒前的画面
+    anticipation: Math.min(0.95, (0.4 + 0.45 * sk) * j()),   // 对这段延迟凭经验脑补多少
+    aimOmega: (8 + 4.5 * sk) * j(),                          // 枪口跟上目标的快慢（手速）
+    aimZeta: 0.62 + Math.random() * 0.25,                    // 越小越容易甩过头再拉回来
+    maxTurn: (3.6 + 2.6 * sk) * j(),                         // 甩枪最大角速度（弧度 / 秒，手机上拇指划屏约 200~350°/秒）
+    aimPrecision: (0.006 - 0.002 * sk) * j(),                // 准星放到目标正中的精度（弧度，不开镜时；倍镜越高越准）
+    tremor: (0.0022 - 0.001 * sk) * j(),                     // 手抖幅度（弧度）
+    recoilControl: Math.min(0.85, (0.42 + 0.38 * sk) * j()), // 压枪：当场抵消每发后坐力的比例（手机上压枪没那么稳）
+    triggerDiscipline: 0.8 + Math.random() * 0.55,           // 枪口离目标多近才扣扳机（越大越急躁）
+    rangeErr: (0.1 - 0.05 * sk) * j(),                       // 目测距离的误差（远距离抬枪用）
+    leadSkill: 0.82 + Math.random() * 0.28                   // 估提前量的习惯偏差
+  };
+}
+
 function createAIBot(id) {
   const { group, legL, legR, body, head, botGunMesh, scopeMesh, chuteMesh, legLPivot, legRPivot, upper, armLPivot, armRPivot, vestMesh, helmetMesh, pack, detailMeshes } = buildSoldierModel();
 
@@ -232,14 +251,18 @@ function createAIBot(id) {
     greed: Math.random(),
     airdropTarget: null,
     nextAirdropCheck: 0,
-    // 开镜瞄准：开镜进度、瞄准稳定度、枪口俯仰角
+    // 开镜瞄准：开镜进度、上半身俯仰角
     adsBlend: 0,
-    aimSettle: 0,
     aimPitch: 0,
     foeUntil: 0, foeY: 0, foeDist: 30,
-    // 枪法：打移动目标给提前量的准确度、远距离抬枪补下坠的准确度（每个 AI 不一样）
-    leadSkill: 0.82 + Math.random() * 0.28,
-    dropSkill: 0.9 + Math.random() * 0.15,
+    // 枪法（像真人一样瞄准，没有命中率数值，见 botaim.js）：每个 AI 的反应、手速、手抖、压枪水平不一样
+    ...rollBotAimTraits(),
+    aimOn: false, aimLostAt: -1e9, reactUntil: 0,
+    aimYaw: 0, aimPit: 0, aimVY: 0, aimVP: 0, recP: 0, recY: 0,
+    desYaw: 0, desPit: 0, desRY: 0, desRP: 0, desPrevYaw: 0, desPrevPit: 0, desValid: false, desDist: 30, desProne: false,
+    rangeEst: 1, leadEst: 1, wanY: 0, wanP: 0, wanT: 0, mzT: -1e9,
+    burstLeft: 0, burstShots: 0, nextShotAt: 0, burstHoldUntil: 0, nextThrowEval: 0,
+    tremorPh: [0, 1, 2, 3, 4, 5].map(() => Math.random() * Math.PI * 2),
     // 性格：好斗（主动搜人）、爱蹲点（阴人）、爱架狙（找高楼窗口远距离狙）
     aggr: Math.random(),
     camper: Math.random(),

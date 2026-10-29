@@ -9,15 +9,15 @@ function botArmorReduction(bot, isHead) {
   return BOT_ARMOR_RED[isHead ? bot.helmLv : bot.vestLv] || 0.10;
 }
 
-// 各类武器的 AI 打法：每轮连发数、射击间隔、近/远距离单发命中率、最大交战距离、偏好距离、换弹时长
-// （伤害不在这里：AI 的子弹和玩家一样按枪的原始伤害、口径衰减、爆头倍数结算）
+// 各类武器的 AI 打法：AI 互殴时每轮连发数、决策间隔、最大交战距离、偏好距离、换弹时长
+// （打玩家时怎么瞄、怎么扣扳机见 botaim.js；伤害和玩家一样按枪的原始伤害、口径衰减、爆头倍数结算）
 const AI_WEAPON_PROFILE = {
-  AR:  { volley: 3, cdMin: 750,  cdMax: 1150, hitNear: 0.136, hitFar: 0.08,  nearR: 25, farR: 135, maxRange: 135, prefRange: 32, reload: 2300 },
-  SMG: { volley: 4, cdMin: 600,  cdMax: 950,  hitNear: 0.145, hitFar: 0.022, nearR: 15, farR: 70,  maxRange: 75,  prefRange: 16, reload: 2000 },
-  LMG: { volley: 5, cdMin: 800,  cdMax: 1200, hitNear: 0.095, hitFar: 0.066, nearR: 25, farR: 135, maxRange: 135, prefRange: 38, reload: 4200 },
-  SG:  { volley: 1, cdMin: 950,  cdMax: 1400, hitNear: 0.40,  hitFar: 0.0,   nearR: 7,  farR: 30,  maxRange: 30,  prefRange: 9,  reload: 3200 },
-  DMR: { volley: 1, cdMin: 850,  cdMax: 1300, hitNear: 0.195, hitFar: 0.16,  nearR: 35, farR: 135, maxRange: 135, prefRange: 50, reload: 2800 },
-  SR:  { volley: 1, cdMin: 1900, cdMax: 2700, hitNear: 0.22,  hitFar: 0.18,  nearR: 35, farR: 135, maxRange: 135, prefRange: 60, reload: 3600 }
+  AR:  { volley: 3, cdMin: 750,  cdMax: 1150, maxRange: 135, prefRange: 32, reload: 2300 },
+  SMG: { volley: 4, cdMin: 600,  cdMax: 950,  maxRange: 75,  prefRange: 16, reload: 2000 },
+  LMG: { volley: 5, cdMin: 800,  cdMax: 1200, maxRange: 135, prefRange: 38, reload: 4200 },
+  SG:  { volley: 1, cdMin: 950,  cdMax: 1400, maxRange: 30,  prefRange: 9,  reload: 3200 },
+  DMR: { volley: 1, cdMin: 850,  cdMax: 1300, maxRange: 135, prefRange: 50, reload: 2800 },
+  SR:  { volley: 1, cdMin: 1900, cdMax: 2700, maxRange: 135, prefRange: 60, reload: 3600 }
 };
 // 武器在 近(<18m) / 中(<60m) / 远 距离的适用度，AI 据此决定切哪把枪
 const AI_RANGE_FIT = { SG: [1.0, 0.25, 0.0], SMG: [0.95, 0.6, 0.15], AR: [0.7, 1.0, 0.7], LMG: [0.6, 0.9, 0.75], DMR: [0.35, 0.8, 0.95], SR: [0.2, 0.6, 1.0] };
@@ -51,12 +51,6 @@ function botAdsTime(bot) {
   const sc = bot.weaponKey && bot.weaponAtts[bot.activeSlot].scope;
   const zoom = sc && ATTACHMENTS_DATA[sc] ? ATTACHMENTS_DATA[sc].zoom : 1.1;
   return 0.2 + Math.min(0.24, (zoom - 1) * 0.035);
-}
-// 瞄准方式对命中率的影响：开镜后明显更准（瞄得越久越稳），不开镜腰射远了就很飘；10 米内腰射不吃亏
-function botAimFactor(bot, dist) {
-  const hip = dist < 10 ? 1.0 : (dist < 25 ? 0.72 : 0.5);
-  const ads = 1.3 + 0.15 * bot.aimSettle;
-  return hip + (ads - hip) * bot.adsBlend;
 }
 
 function botGiveWeapon(bot, key, atts) {
@@ -252,22 +246,6 @@ function botPickAirdrop(bot, now) {
   return best;
 }
 
-// 命中率：随距离从近距值过渡到远距值；倍镜提升远距离命中、枪口/握把更稳；玩家蹲/趴更难被打中
-// （geometric = true：子弹真实飞行时，蹲 / 趴的目标本来就更小，不再额外打折）
-function botHitChance(bot, prof, dist, geometric = false) {
-  let p = prof.hitNear + (prof.hitFar - prof.hitNear) * smoothstep(prof.nearR, prof.farR, dist);
-  const atts = bot.weaponAtts[bot.activeSlot];
-  p *= botAimFactor(bot, dist);
-  if (atts.scope && dist > 40) p *= 1.3;
-  if (atts.muzzle) p *= 1.08;
-  if (atts.grip) p *= 1.08;
-  if (!geometric && player.stance === "crouch") p *= 0.9;
-  else if (!geometric && player.stance === "prone") p *= 0.75;
-  // 超远距离（倍镜狙击）再打折：200 米外逐渐变难
-  p *= 1 - 0.4 * smoothstep(200, 420, dist);
-  return p;
-}
-
 // 手上（或指定槽位）枪的倍镜倍率，没镜子为 1
 function botScopeZoom(bot, slot = bot.activeSlot) {
   const sc = bot.weapons[slot] && bot.weaponAtts[slot].scope;
@@ -400,36 +378,6 @@ function spawnBotMuzzleFlash(bot) {
   spawnFx({ pos: botMuzzlePosition(bot, new THREE.Vector3()), color: 0xffc76a, s0: 0.35, s1: 0.75, a0: 1, a1: 0, life: 0.06, additive: true });
 }
 
-// AI 的瞄准方向：按玩家当前移动速度 × 子弹飞行时间给提前量、按下坠量抬枪（各自有技术误差），
-// 再加上由命中率换算出的瞄准散布（距离越远散布越大）。打不打得中由子弹真正飞到哪决定
-const BOT_HIT_R = 0.64; // 把命中率换算成散布时用的等效目标半径（米）
-const BOT_ACCURACY = 2.0; // AI 打玩家的命中率倍数
-function gaussRand() { return Math.sqrt(-2 * Math.log(Math.random() + 1e-9)) * Math.cos(Math.PI * 2 * Math.random()); }
-const _baU = new THREE.Vector3(), _baW = new THREE.Vector3();
-function botAimDirection(bot, muzzle, wId, hitP, dist, shotIdx) {
-  const v0 = bulletSpeedOf(wId), k = bulletDragOf(wId);
-  const tgt = new THREE.Vector3(playerRig.position.x, player.feetY + (player.stance === "prone" ? 0.3 : player.eyeH * 0.62), playerRig.position.z);
-  const d = muzzle.distanceTo(tgt);
-  let t = bulletFlightTime(d, v0, k);
-  if (!isFinite(t)) t = d / v0 * 1.6;
-  // 提前量 = 子弹飞行时间 + 一帧（子弹下一帧才和玩家做碰撞，那时玩家已经又走了一帧）
-  const lead = bot.leadSkill * (0.88 + Math.random() * 0.24);
-  const tl = t + frameDtAvg;
-  tgt.x += playerVel.x * tl * lead;
-  tgt.z += playerVel.z * tl * lead;
-  tgt.y += bulletDropAt(t) * bot.dropSkill * (0.94 + Math.random() * 0.12);
-  // 枪法：在原命中率基础上整体收紧散布（打不中也是擦着身子过去）
-  const p = Math.max(0.01, Math.min(0.85, hitP * BOT_ACCURACY));
-  // 150 米外散布随距离放大（倍率越高放大得越晚）
-  const farDiv = 150 * (1 + 0.14 * (botScopeZoom(bot) - 1));
-  const sigma = BOT_HIT_R / Math.sqrt(-2 * Math.log(1 - p)) * Math.max(1, dist / farDiv) * (1 + botSpreadGrowth(wId) * shotIdx);
-  const dir = tgt.clone().sub(muzzle).normalize();
-  _baU.set(-dir.z, 0, dir.x).normalize();
-  _baW.crossVectors(dir, _baU).normalize();
-  tgt.addScaledVector(_baU, gaussRand() * sigma).addScaledVector(_baW, gaussRand() * sigma);
-  return tgt.sub(muzzle).normalize();
-}
-
 // 枪声按声速传播：远处开枪，先听到子弹破空 / 打在身边，过一会儿才传来枪声
 function botShotSound(bot, isSupp, d) {
   const x = bot.group.position.x, z = bot.group.position.z;
@@ -441,40 +389,11 @@ function botShotSound(bot, isSupp, d) {
   if (d > 60) setTimeout(play, d / 343 * 1000); else play();
 }
 
-// 一轮打几发：只有点射 / 单发的步枪（M16A4 三连发、MK47 两连发）按点射打，其它按枪种
+// AI 互殴一轮打几发：只有点射的步枪（M16A4 三连发、MK47 两连发）按点射打，其它按枪种
 function botVolleySize(bot, prof) {
   const w = WEAPONS_DATA[bot.weaponKey];
   if (w.type === "AR" && !w.modes.includes("auto")) return w.id === "mk47" ? 2 : 3;
   return prof.volley;
-}
-// 一轮里后面几发越打越散：全自动按这把枪的垂直后坐力放大（Beryl 比 AUG 散得多），点射枪后坐力受控几乎不散
-function botSpreadGrowth(wId) {
-  const w = WEAPONS_DATA[wId];
-  if (!w.modes.includes("auto")) return 0.04;
-  return 0.12 * (w.vRec || 1.05) / 1.05;
-}
-
-// 向玩家打一轮连发：每发按射速间隔从枪口射出一颗真实弹头
-function botFireAtPlayer(bot, dist, now) {
-  const wData = WEAPONS_DATA[bot.weaponKey];
-  const prof = botProfile(bot);
-  const shots = Math.max(1, Math.min(botVolleySize(bot, prof), bot.mags[bot.activeSlot]));
-  const hitP = botHitChance(bot, prof, dist, true);
-  const isSupp = bot.weaponAtts[bot.activeSlot].muzzle === "supp";
-  const gap = Math.max(50, 60000 / wData.rpm);
-  const wKey = bot.weaponKey;
-  for (let s = 0; s < shots; s++) {
-    setTimeout(() => {
-      if (!bot.alive || player.phase !== "ground" || bot.weaponKey !== wKey || replayState.active) return;
-      const d = bot.group.position.distanceTo(playerRig.position);
-      botShotSound(bot, isSupp, d);
-      if (!isSupp && d < 320) spawnBotMuzzleFlash(bot);
-      const muzzle = botMuzzlePosition(bot, new THREE.Vector3());
-      spawnBullet({ pos: muzzle, dir: botAimDirection(bot, muzzle, wKey, hitP, d, s), wId: wKey, owner: bot,
-        info: { dmg: botShotDamage(wData, d), botName: bot.name, wName: wData.name } });
-    }, s * gap);
-  }
-  botAfterShots(bot, shots, dist, now);
 }
 
 // AI 获知玩家位置（看到 / 听到 / 被打中），距离越远、noiseK 越大，估计的位置误差越大
@@ -975,8 +894,8 @@ function updateAIBot(bot, dt, now, elapsed) {
 
     if (moveMode === "patrol" && now < bot.pauseUntil) moveSpd = 0;
 
-    // 开镜瞄准：交火时按倍镜举枪开镜（红点约 0.2 秒、8 倍镜约 0.45 秒），瞄好了才开第一枪；
-    // 开镜移动变慢、命中率明显提高；贴脸（喷子 18 米、其它枪 10 米内）直接腰射。和别的 AI 对枪时同样开镜
+    // 开镜瞄准：交火时按倍镜举枪开镜（红点约 0.2 秒、8 倍镜约 0.45 秒），开好镜才开第一枪；
+    // 开镜移动变慢、手更稳、没有腰射散布；贴脸（喷子 18 米、其它枪 10 米内）直接腰射。和别的 AI 对枪时同样开镜
     const wTypeNow = bot.weaponKey ? WEAPONS_DATA[bot.weaponKey].type : null;
     const reloadingNow = now < bot.reloadUntil || now < bot.swapUntil || bot.healUntil > 0 || stunned;
     const hipRange = wTypeNow === "SG" ? 18 : 10;
@@ -984,15 +903,17 @@ function updateAIBot(bot, dt, now, elapsed) {
     // 阴人 / 摸近目标时提前开镜；架点时隔一会儿开镜扫一圈
     const scanADS = (moveMode === "overwatch" && bot.owAt && Math.sin(now * 0.0007 + bot.wanderPhase * 3) > 0.1) ||
       moveMode === "ambush" || (moveMode === "hunt" && bot.huntNear);
-    const wantADS = !!bot.weaponKey && !reloadingNow && ((moveMode === "combat" && distToPlayer > hipRange) || fightingBot || scanADS);
+    // 刚看到人还没反应过来时不会开镜
+    const reacting = bot.aimOn && now < bot.reactUntil;
+    const wantADS = !!bot.weaponKey && !reloadingNow && ((moveMode === "combat" && distToPlayer > hipRange && !reacting) || fightingBot || scanADS);
     bot.adsBlend = wantADS ? Math.min(1, bot.adsBlend + dt / botAdsTime(bot)) : Math.max(0, bot.adsBlend - dt / 0.16);
-    bot.aimSettle = wantADS && bot.adsBlend >= 1 ? Math.min(1, bot.aimSettle + dt / 1.2) : 0;
     if (bot.adsBlend > 0) moveSpd *= 1 - 0.45 * bot.adsBlend;
     const aimInDone = !(moveMode === "combat" && distToPlayer > hipRange) || bot.adsBlend >= 0.9;
-    // 枪口上下对准目标（目标站 / 蹲 / 趴的高度不同，楼上楼下也能对准）
-    if (moveMode === "combat") bot.aimPitch = Math.atan2(player.feetY + player.eyeH * 0.72 - (bot.group.position.y + 1.55 - 0.42 * bot.crouchBlend), Math.max(1, distToPlayer));
-    else if (fightingBot) bot.aimPitch = Math.atan2(bot.foeY + 1.2 - (bot.group.position.y + 1.55), Math.max(1, bot.foeDist));
-    else bot.aimPitch *= Math.max(0, 1 - dt * 6);
+    // 和玩家交火时上半身的俯仰由枪口决定（botaim.js）；和别的 AI 对枪时直接对着对方
+    if (!bot.aimOn) {
+      if (fightingBot) bot.aimPitch = Math.atan2(bot.foeY + 1.2 - (bot.group.position.y + 1.55), Math.max(1, bot.foeDist));
+      else bot.aimPitch *= Math.max(0, 1 - dt * 6);
+    }
     bot.wanderAmp = moveMode === "patrol" ? 0.26 : (moveMode === "zone" ? 0.14 : (moveMode === "loot" ? 0.08 : 0));
 
     // 执行 7向触须避障 + 房门导航移动（带转向/加减速惯性与个体速度差异）
@@ -1032,60 +953,72 @@ function updateAIBot(bot, dt, now, elapsed) {
       }
     }
 
-    // 朝向控制：交火时面向玩家一边横移一边射击；平时面向行进方向；停下时左右张望
-    // 全部为限速平滑转身，不再瞬间“瞬移式”转头
-    let faceYaw, turnRate;
-    if (isAlerted && canSeePlayer) {
-      faceYaw = Math.atan2(playerRig.position.x - bot.group.position.x, playerRig.position.z - bot.group.position.z);
-      turnRate = 11;
-    } else if (now < bot.faceHintUntil) {
-      faceYaw = bot.faceHintYaw;
-      turnRate = 9;
-    } else if (moveMode === "ambush") {
-      faceYaw = bot.ambushYaw + Math.sin(now * 0.0007 + bot.wanderPhase) * 0.2;
-      turnRate = 5;
-    } else if (moveMode === "overwatch" && bot.owAt) {
-      faceYaw = bot.owSpot.yaw + Math.sin(now * 0.00045 + bot.wanderPhase) * 0.6;
-      turnRate = 2.5;
-    } else if (moveMode === "hunt" && bot.huntNear && bot.huntSearchUntil === 0) {
-      faceYaw = Math.atan2(bot.lkp.x - bot.group.position.x, bot.lkp.z - bot.group.position.z);
-      turnRate = 6;
-    } else if (bot.curSpeed < 0.8) {
-      faceYaw = bot.moveHeading + Math.sin(now * 0.0011 + bot.wanderPhase) * 1.0;
-      turnRate = 2.2;
+    // 朝向控制：和玩家交火时身体跟着枪口转（枪口像人手一样有反应时间、转速上限、跟枪延迟，见 botaim.js），
+    // 一边横移一边射击；平时面向行进方向；停下时左右张望。全部为限速平滑转身，不会一帧甩过去
+    botAimUpdate(bot, isAlerted && canSeePlayer && !!bot.weaponKey && !stunned, dt, now);
+    if (bot.aimOn) {
+      bot.group.rotation.set(0, bot.aimYaw, 0);
     } else {
-      faceYaw = bot.moveHeading;
-      turnRate = 6.5;
+      let faceYaw, turnRate;
+      if (isAlerted && canSeePlayer) {
+        faceYaw = Math.atan2(playerRig.position.x - bot.group.position.x, playerRig.position.z - bot.group.position.z);
+        turnRate = 6;
+      } else if (now < bot.faceHintUntil) {
+        faceYaw = bot.faceHintYaw;
+        turnRate = 9;
+      } else if (moveMode === "ambush") {
+        faceYaw = bot.ambushYaw + Math.sin(now * 0.0007 + bot.wanderPhase) * 0.2;
+        turnRate = 5;
+      } else if (moveMode === "overwatch" && bot.owAt) {
+        faceYaw = bot.owSpot.yaw + Math.sin(now * 0.00045 + bot.wanderPhase) * 0.6;
+        turnRate = 2.5;
+      } else if (moveMode === "hunt" && bot.huntNear && bot.huntSearchUntil === 0) {
+        faceYaw = Math.atan2(bot.lkp.x - bot.group.position.x, bot.lkp.z - bot.group.position.z);
+        turnRate = 6;
+      } else if (bot.curSpeed < 0.8) {
+        faceYaw = bot.moveHeading + Math.sin(now * 0.0011 + bot.wanderPhase) * 1.0;
+        turnRate = 2.2;
+      } else {
+        faceYaw = bot.moveHeading;
+        turnRate = 6.5;
+      }
+      turnBotTowardYaw(bot, faceYaw, turnRate * dt);
     }
-    turnBotTowardYaw(bot, faceYaw, turnRate * dt);
     const busy = now < bot.reloadUntil || now < bot.swapUntil || bot.healUntil > 0 || stunned;
     animateBotBody(bot, dt, !!bot.weaponKey && (isAlerted || fightingBot) && !busy, distToPlayer, now);
 
-    // AI 射击与反击逻辑：按手中武器的射速 / 射程 / 伤害开火；换弹、切枪、打药期间不能开火
+    // AI 射击与反击逻辑：换弹、切枪、打药期间不能开火
     if (bot.weaponKey && !busy) {
       const prof = botProfile(bot);
       const wType = WEAPONS_DATA[bot.weaponKey].type;
+      const fullRange = botEngageRange(bot, prof, wType);
+      // 和玩家对枪：每帧看枪口压没压在人身上，压住了才扣扳机（点射 / 连射；枪口跳出去就松手，见 botaim.js）
+      if (botTriggerUpdate(bot, now, distToPlayer, bot.aimOn && distToPlayer < fullRange && aimInDone)) {
+        bot.alertUntil = Math.max(bot.alertUntil, now + 6000);
+      }
+      // 正面对枪时找机会丢雷 / 放烟（约每秒想一次，连射中不丢）
+      if (bot.aimOn && bot.burstLeft <= 0 && now > bot.nextThrowEval) {
+        bot.nextThrowEval = now + 800 + Math.random() * 400;
+        if (botConsiderThrow(bot, now, distToPlayer, canSeePlayer, isAlerted)) {
+          bot.lastFireTime = now;
+          bot.burstHoldUntil = now + 700;
+        }
+      }
       const cdBase = prof.cdMin + Math.random() * (prof.cdMax - prof.cdMin);
       const fireCooldown = isAlerted ? cdBase : cdBase * 1.8;
-      if (now - bot.lastFireTime > fireCooldown) {
-        const fullRange = botEngageRange(bot, prof, wType);
+      if (!bot.aimOn && now - bot.lastFireTime > fireCooldown) {
         const engageRange = isAlerted ? fullRange : fullRange * ((wType === "SR" || wType === "DMR") ? 0.9 : 0.58);
-        const engageChance = moveMode === "ambush" ? 1 : (isAlerted ? 0.88 : 0.42);
 
         if (botConsiderThrow(bot, now, distToPlayer, canSeePlayer, isAlerted)) {
           bot.lastFireTime = now;
-        } else if (player.phase === "ground" && distToPlayer < engageRange && canSeePlayer && !aimInDone) {
-          // 正在举枪开镜：瞄好再打（这一下不会去打别人）
         } else if (player.phase === "ground" && distToPlayer < fullRange && canSeePlayer && !isAlerted && distToPlayer > 60) {
-          // 远处发现了人：先进入交火状态、开好镜再打（不再远距离腰射）
+          // 远处发现了人：进入交火状态（先反应、转枪口、开好镜再打）
           bot.alertUntil = now + 8000;
           bot.lastFireTime = now;
-          setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 700);
-        } else if (player.phase === "ground" && distToPlayer < engageRange && Math.random() < engageChance && canSeePlayer) {
+        } else if (player.phase === "ground" && distToPlayer < engageRange && canSeePlayer && !isAlerted) {
+          // 近处有人但还没注意到：每隔一会儿有一定几率注意到，注意到了就进入交火
           bot.lastFireTime = now;
-          bot.alertUntil = Math.max(bot.alertUntil, now + 6000);
-          setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 700);
-          botFireAtPlayer(bot, distToPlayer, now);
+          if (Math.random() < 0.42) bot.alertUntil = Math.max(bot.alertUntil, now + 6000);
         } else {
           const otherBot = aiPlayers.find(o =>
             o !== bot && o.alive && o.phase === "ground" &&
@@ -1110,6 +1043,8 @@ function updateAIBot(bot, dt, now, elapsed) {
           }
         }
       }
+    } else {
+      bot.burstLeft = 0; // 换弹 / 切枪 / 被闪：这一梭子断了
     }
   }
 }

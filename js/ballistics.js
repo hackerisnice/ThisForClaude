@@ -64,23 +64,40 @@ function distPointToSeg(px, py, pz, a, dir, len) {
   const t = Math.max(0, Math.min(len, (px - a.x) * dir.x + (py - a.y) * dir.y + (pz - a.z) * dir.z));
   return Math.hypot(px - (a.x + dir.x * t), py - (a.y + dir.y * t), pz - (a.z + dir.z * t));
 }
-// 线段与玩家身体（竖直胶囊体）的最近交点距离，打不中返回 null
+// 线段与玩家身体的最近交点距离，打不中返回 null。
+// 站 / 蹲：身体是脚到肩的竖直胶囊（半径 0.33）+ 眼睛高度的头（半径 0.2 的球），和 AI 模型的身体、头一样大；
+// 趴下：贴地的一段（不分头身）
+const PLAYER_HEAD_R = 0.2;
 function bulletHitsPlayer(a, dir, len) {
   if (player.phase !== "ground") return null;
   const px = playerRig.position.x, pz = playerRig.position.z;
+  if (distPointToSeg(px, player.feetY + 1, pz, a, dir, len) > 2.2) return null;
   const prone = player.stance === "prone";
-  const y0 = player.feetY + 0.12, y1 = player.feetY + (prone ? 0.5 : player.eyeH + 0.15);
-  const R = prone ? 0.42 : 0.36;
-  // 在线段上按 0.15 米采样，找离身体轴线最近的点
-  const n = Math.max(1, Math.ceil(len / 0.15));
+  const y0 = player.feetY + (prone ? 0.12 : 0.3), y1 = player.feetY + (prone ? 0.5 : player.eyeH - 0.36);
+  const R = prone ? 0.42 : 0.33;
+  let best = null;
+  if (!prone) {
+    // 头：线段离头部球心最近的点，在球里就算爆头（取子弹进入球面的位置）
+    const hy = player.feetY + player.eyeH, HR2 = PLAYER_HEAD_R * PLAYER_HEAD_R;
+    const t = Math.max(0, Math.min(len, (px - a.x) * dir.x + (hy - a.y) * dir.y + (pz - a.z) * dir.z));
+    const cx = a.x + dir.x * t - px, cy = a.y + dir.y * t - hy, cz = a.z + dir.z * t - pz;
+    const d2 = cx * cx + cy * cy + cz * cz;
+    if (d2 < HR2) {
+      const te = Math.max(0, t - Math.sqrt(HR2 - d2));
+      best = { dist: te, x: a.x + dir.x * te, y: a.y + dir.y * te, z: a.z + dir.z * te, head: true };
+    }
+  }
+  // 身体：在线段上按 0.1 米采样，找离身体轴线最近的点（比头先碰到就算打在身上）
+  const n = Math.max(1, Math.ceil(len / 0.1));
   for (let i = 0; i <= n; i++) {
     const t = len * i / n;
+    if (best && t >= best.dist) break;
     const x = a.x + dir.x * t, y = a.y + dir.y * t, z = a.z + dir.z * t;
     if (y < y0 - R || y > y1 + R) continue;
     const cy = Math.max(y0, Math.min(y1, y));
-    if (Math.hypot(x - px, y - cy, z - pz) < R) return { dist: t, x, y, z, head: !prone && y > player.feetY + player.eyeH - 0.18 };
+    if (Math.hypot(x - px, y - cy, z - pz) < R) return { dist: t, x, y, z, head: false };
   }
-  return null;
+  return best;
 }
 
 function traceBulletSegment(b, a, dir, len) {
@@ -157,6 +174,7 @@ function playerBulletHitBot(bot, isHead, point, info, dist = 0) {
   player.totalDmg += finalDmg;
   spawnBloodEffect(point);
   bot.alertUntil = now + 12000;
+  botFlinch(bot, now);
   bot.strafeDir = -bot.strafeDir;
   setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 1500);
   botLearnPlayerPos(bot, now, 0.05);
@@ -183,8 +201,8 @@ function finishBullet(b, hit) {
   } else if (hit.kind === "bot") {
     playerBulletHitBot(hit.bot, hit.head, hit.point, b.info, b.from.distanceTo(hit.point));
   } else if (hit.kind === "player") {
-    // AI 的子弹和玩家的一样：枪的原始伤害 × 爆头倍数 × 距离衰减（霰弹的中弹弹丸数已经按距离算进 dmg 里了）
-    const fall = WEAPONS_DATA[b.wId].type === "SG" ? 1 : bulletDamageScale(b.wId, b.from.distanceTo(hit.point));
+    // AI 的子弹和玩家的一样：枪的原始伤害（霰弹按每颗弹丸）× 爆头倍数 × 距离衰减
+    const fall = bulletDamageScale(b.wId, b.from.distanceTo(hit.point));
     damagePlayer(Math.round(b.info.dmg * (hit.head ? headMultOf(b.wId) : 1) * fall), b.info.botName, b.info.wName, hit.head);
   }
 }
@@ -277,4 +295,5 @@ function trackPlayerVelocity(dt) {
     if (Math.hypot(vx, vz) < 30) { playerVel.x += (vx - playerVel.x) * k; playerVel.z += (vz - playerVel.z) * k; }
   }
   _pvLastX = x; _pvLastZ = z;
+  recordPlayerHistory(performance.now()); // AI 的视觉延迟用（botaim.js）
 }

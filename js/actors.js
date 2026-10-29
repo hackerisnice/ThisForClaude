@@ -260,7 +260,7 @@ function createAIBot(id) {
     aimOn: false, aimLostAt: -1e9, reactUntil: 0,
     aimYaw: 0, aimPit: 0, aimVY: 0, aimVP: 0, recP: 0, recY: 0,
     desYaw: 0, desPit: 0, desRY: 0, desRP: 0, desPrevYaw: 0, desPrevPit: 0, desValid: false, desDist: 30, desProne: false,
-    rangeEst: 1, leadEst: 1, wanY: 0, wanP: 0, wanT: 0,
+    rangeEst: 1, leadEst: 1, wanY: 0, wanP: 0, wanT: 0, mzT: -1e9,
     burstLeft: 0, burstShots: 0, nextShotAt: 0, burstHoldUntil: 0, nextThrowEval: 0,
     tremorPh: [0, 1, 2, 3, 4, 5].map(() => Math.random() * Math.PI * 2),
     // 性格：好斗（主动搜人）、爱蹲点（阴人）、爱架狙（找高楼窗口远距离狙）

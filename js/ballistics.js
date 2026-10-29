@@ -174,6 +174,7 @@ function playerBulletHitBot(bot, isHead, point, info, dist = 0) {
   player.totalDmg += finalDmg;
   spawnBloodEffect(point);
   bot.alertUntil = now + 12000;
+  botFlinch(bot, now);
   bot.strafeDir = -bot.strafeDir;
   setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 1500);
   botLearnPlayerPos(bot, now, 0.05);

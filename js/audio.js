@@ -64,19 +64,31 @@ class SoundEngine {
     src.connect(f); f.connect(g); g.connect(this.out(pan));
     src.start(now, Math.random() * 1.5, dur + 0.05);
   }
+  // 枪声的衰减噪声：每种预先生成 4 份轮流用（原来每一枪都重新生成几千个采样，连射时很费）
+  shotBuffer(isSuppressed) {
+    const key = isSuppressed ? "shotBufsS" : "shotBufsL";
+    if (!this[key]) {
+      const sr = this.ctx.sampleRate, dur = isSuppressed ? 0.065 : 0.13, tau = sr * (isSuppressed ? 0.016 : 0.035);
+      this[key] = [];
+      for (let v = 0; v < 4; v++) {
+        const buf = this.ctx.createBuffer(1, Math.floor(sr * dur), sr);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * Math.exp(-i / tau);
+        this[key].push(buf);
+      }
+      this.shotBufIdx = 0;
+    }
+    this.shotBufIdx = (this.shotBufIdx + 1) % 4;
+    return this[key][this.shotBufIdx];
+  }
   playShot(isSuppressed, weight = 1.0, dist = 0, pan = 0) {
     this.init();
     const volScale = Math.max(0, 1 - dist / 240);
     if (volScale <= 0.02) return;
     const now = this.ctx.currentTime;
     const dur = isSuppressed ? 0.065 : 0.13;
-    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * dur, this.ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (this.ctx.sampleRate * (isSuppressed ? 0.016 : 0.035)));
-    }
     const src = this.ctx.createBufferSource();
-    src.buffer = buf;
+    src.buffer = this.shotBuffer(isSuppressed);
     const filter = this.ctx.createBiquadFilter();
     filter.type = isSuppressed ? "bandpass" : "lowpass";
     filter.frequency.setValueAtTime(isSuppressed ? 1050 : (1700 / weight), now);

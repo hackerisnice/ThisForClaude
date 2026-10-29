@@ -85,9 +85,16 @@ function botComputeDesiredAim(bot, now) {
   const s = samplePlayerAt(now - bot.perceptLag * 1000, _aimS);
   const ant = bot.perceptLag * bot.anticipation;
   let tx = s.x + s.vx * ant, tz = s.z + s.vz * ant;
-  // 瞄身体中间（站着约 1 米高，蹲着约 0.7 米）
-  const ty = s.y + (s.prone ? 0.3 : s.eyeH * 0.6);
-  const m = botMuzzlePosition(bot, _aimMz);
+  // 瞄身体中间（站着约 1 米高）；蹲着时头离身体中间近，枪口一跳就上头，瞄低一点（约 0.63 米）
+  const ty = s.y + (s.prone ? 0.3 : s.eyeH * 0.6 - (1.7 - s.eyeH) * 0.1);
+  // 枪口位置：骨骼矩阵每 0.1 秒重算一次（平时渲染时也会更新），中间只补上身体这一帧的位移
+  let m;
+  if (now - bot.mzT > 100) { m = botMuzzlePosition(bot, _aimMz); bot.mzT = now; }
+  else {
+    m = _aimMz.set(0, 0, 0.36).applyMatrix4(bot.botGunMesh.matrixWorld);
+    const g = bot.group.matrixWorld.elements, p = bot.group.position;
+    m.x += p.x - g[12]; m.y += p.y - g[13]; m.z += p.z - g[14];
+  }
   const dEst = Math.max(1, Math.hypot(tx - m.x, ty - m.y, tz - m.z) * bot.rangeEst);
   const wId = bot.weaponKey, v0 = bulletSpeedOf(wId);
   let t = bulletFlightTime(dEst, v0, bulletDragOf(wId));
@@ -286,4 +293,13 @@ function botFireShot(bot, now) {
   bot.leadEst += (1 - bot.leadEst) * 0.05;
   bot.lastFireTime = now;
   botAfterShots(bot, 1, d, now);
+}
+
+// 中弹会本能地一抖（和端游的中弹晃动一样）：枪口被打偏，这一梭子断掉，稳一下才重新压枪
+function botFlinch(bot, now) {
+  if (!bot.aimOn) return;
+  bot.recP += Math.random() * 0.03 - 0.008;
+  bot.recY += (Math.random() - 0.5) * 0.04;
+  bot.burstLeft = 0;
+  bot.burstHoldUntil = Math.max(bot.burstHoldUntil, now + 100 + Math.random() * 150);
 }

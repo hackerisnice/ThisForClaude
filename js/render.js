@@ -101,6 +101,26 @@ function strokeWrapped(ctx, size, x, y, drawFn) {
   }
 }
 
+// 写实照片贴图（assets_tex.js 内嵌的 CC0 贴图）：先用程序生成的贴图顶上，图片解码完后原地换成照片
+// （同一个贴图对象，用到它的材质都不用改）；overlay 在照片上再补画东西（路面标线 / 车辙）
+function upgradeToPhoto(tex, key, overlay) {
+  if (typeof TEX_DATA === "undefined" || !TEX_DATA[key]) return tex;
+  const img = new Image();
+  img.onload = () => {
+    const cv = tex.image, ctx = cv.getContext("2d");
+    cv.width = img.width; cv.height = img.height;
+    ctx.drawImage(img, 0, 0);
+    if (overlay) overlay(ctx, cv.width);
+    tex.needsUpdate = true;
+  };
+  img.src = TEX_DATA[key];
+  return tex;
+}
+// 没有程序生成版本的照片贴图：解码完成前先用纯色
+function photoTexture(key, fallback) {
+  return upgradeToPhoto(makeCanvasTexture(4, (ctx, s) => { ctx.fillStyle = fallback; ctx.fillRect(0, 0, s, s); }), key);
+}
+
 const grassTex = makeCanvasTexture(256, (ctx, s) => {
   paintPixels(ctx, s, (x, y, o) => {
     const u = x / s, v = y / s;
@@ -164,36 +184,47 @@ const barkTex = makeCanvasTexture(128, (ctx, s) => {
   });
 });
 
-const leafTex = makeCanvasTexture(128, (ctx, s) => {
-  paintPixels(ctx, s, (x, y, o) => {
-    const u = x / s, v = y / s;
-    const n = fbm(u * 8, v * 8, 51, 3, 8);
-    const k = 0.66 + n * 0.38 + (hash2(x, y, 11) - 0.5) * 0.18;
-    o[0] = 236 * k; o[1] = 255 * k; o[2] = 214 * k;
-  });
-});
+
+// 道路标线：两侧白色边线 + 中间黄色虚线（带磨损）
+function paintRoadLines(ctx, s, vertical) {
+  const line = (a0, a1, b0, b1, color) => {
+    ctx.fillStyle = color;
+    if (vertical) ctx.fillRect(b0 * s, a0 * s, (b1 - b0) * s, (a1 - a0) * s);
+    else ctx.fillRect(a0 * s, b0 * s, (a1 - a0) * s, (b1 - b0) * s);
+  };
+  line(0, 1, 0.055, 0.075, "rgba(225,225,215,0.78)");
+  line(0, 1, 0.925, 0.945, "rgba(225,225,215,0.78)");
+  line(0, 0.32, 0.488, 0.512, "rgba(222,184,60,0.85)");
+  // 磨损：标线上零星的斑驳
+  for (let i = 0; i < s * 3; i++) {
+    ctx.fillStyle = `rgba(48,48,50,${0.25 + Math.random() * 0.4})`;
+    ctx.fillRect(Math.random() * s, Math.random() * s, 1 + Math.random() * s / 85, 1 + Math.random() * s / 85);
+  }
+}
+upgradeToPhoto(grassTex, "grass");
+upgradeToPhoto(plasterTex, "plaster");
+upgradeToPhoto(woodTex, "wood");
+upgradeToPhoto(rockTex, "rock");
+upgradeToPhoto(barkTex, "bark");
+const dirtTex = photoTexture("dirt", "#7a6c4a");      // 地形：村镇 / 河岸的泥土
+const brickTex = photoTexture("brick", "#9e6656");    // 红砖墙
+const stoneTex = photoTexture("stone", "#d8d8d4");    // 遗迹石块墙
+const roofTex = photoTexture("roof", "#cfcfcf");      // 坡屋顶瓦片（屋脊沿 X 方向）
+const roofTexR = photoTexture("roof", "#cfcfcf");     // 坡屋顶瓦片（屋脊沿 Z 方向，贴图转 90°）
+roofTexR.rotation = Math.PI / 2;
+const metalTex = photoTexture("metal", "#d8d8d8");    // 仓库 / 谷仓的波纹铁皮
+const concreteTex = photoTexture("concrete", "#d8d8d8"); // 平屋顶水泥
 
 function makeAsphaltTexture(vertical) {
-  return makeCanvasTexture(256, (ctx, s) => {
+  const tex = makeCanvasTexture(256, (ctx, s) => {
     paintPixels(ctx, s, (x, y, o) => {
       const n = fbm(x / s * 8, y / s * 8, 61, 3, 8);
       const k = 52 + n * 22 + (hash2(x, y, 15) - 0.5) * 16;
       o[0] = k; o[1] = k * 1.01; o[2] = k * 1.04;
     });
-    // 道路标线：两侧白色边线 + 中间黄色虚线（带磨损）
-    const line = (a0, a1, b0, b1, color) => {
-      ctx.fillStyle = color;
-      if (vertical) ctx.fillRect(b0 * s, a0 * s, (b1 - b0) * s, (a1 - a0) * s);
-      else ctx.fillRect(a0 * s, b0 * s, (a1 - a0) * s, (b1 - b0) * s);
-    };
-    line(0, 1, 0.055, 0.075, "rgba(225,225,215,0.78)");
-    line(0, 1, 0.925, 0.945, "rgba(225,225,215,0.78)");
-    line(0, 0.32, 0.488, 0.512, "rgba(222,184,60,0.85)");
-    for (let i = 0; i < 900; i++) {
-      ctx.fillStyle = `rgba(48,48,50,${0.25 + Math.random() * 0.4})`;
-      ctx.fillRect(Math.random() * s, Math.random() * s, 1 + Math.random() * 3, 1 + Math.random() * 3);
-    }
+    paintRoadLines(ctx, s, vertical);
   });
+  return upgradeToPhoto(tex, "asphalt", (ctx, s) => paintRoadLines(ctx, s, vertical));
 }
 
 const waterNormalTex = makeCanvasTexture(128, (ctx, s) => {
@@ -430,9 +461,15 @@ const staticBatchMaterials = {
   wood:    new THREE.MeshLambertMaterial({ vertexColors: true, map: woodTex }),
   rock:    new THREE.MeshLambertMaterial({ vertexColors: true, map: rockTex }),
   bark:    new THREE.MeshLambertMaterial({ vertexColors: true, map: barkTex }),
-  leaf:    new THREE.MeshLambertMaterial({ vertexColors: true, map: leafTex })
+  brick:   new THREE.MeshLambertMaterial({ vertexColors: true, map: brickTex }),
+  stone:   new THREE.MeshLambertMaterial({ vertexColors: true, map: stoneTex }),
+  roof:    new THREE.MeshLambertMaterial({ vertexColors: true, map: roofTex }),
+  roofR:   new THREE.MeshLambertMaterial({ vertexColors: true, map: roofTexR }),
+  metal:   new THREE.MeshLambertMaterial({ vertexColors: true, map: metalTex }),
+  concrete: new THREE.MeshLambertMaterial({ vertexColors: true, map: concreteTex })
 };
-const STATIC_BATCH_UV_SCALE = { plaster: 0.36, wood: 0.5, rock: 0.45, bark: 0.6, leaf: 0.35 };
+// 每米多少张贴图（世界坐标投影 UV）：按照片里砖块 / 瓦片 / 木板的真实尺寸定
+const STATIC_BATCH_UV_SCALE = { plaster: 0.36, wood: 0.7, rock: 0.3, bark: 0.6, brick: 0.9, stone: 0.45, roof: 0.6, roofR: 0.6, metal: 0.4, concrete: 0.25 };
 const staticBatchBuckets = new Map();
 const sealedBatchBuckets = [];
 const staticBatchMeshes = [];

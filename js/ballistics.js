@@ -161,6 +161,7 @@ function traceBulletSegment(b, a, dir, len) {
 
 function botNearMiss(bot) {
   const now = performance.now();
+  bot.playerThreatT = now;
   bot.alertUntil = Math.max(bot.alertUntil, now + 9000);
   botLearnPlayerPos(bot, now, 0.1);
   if (now > bot.faceHintUntil) setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 1200);
@@ -180,6 +181,7 @@ function playerBulletHitBot(bot, isHead, point, info, dist = 0) {
   player.totalDmg += finalDmg;
   spawnBloodEffect(point);
   bot.alertUntil = now + 12000;
+  bot.playerThreatT = now;
   botFlinch(bot, now);
   bot.strafeDir = -bot.strafeDir;
   setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 1500);
@@ -194,13 +196,16 @@ function finishBullet(b, hit) {
   const end = hit ? hit.point : b.p;
   const impact = !hit ? 0 : (hit.kind === "env" || hit.kind === "door" ? 2 : 1);
   // 录像：子弹轨迹（时间记在开枪那一刻，回放里按真实弹速飞）
-  replayShotEvent(b.owner === -1 ? -1 : b.owner.id, b.from.x, b.from.y, b.from.z, [end.x, end.y, end.z], [impact], 0, b.born, b.v0);
+  replayShotEvent(b.owner === -1 ? -1 : b.owner.id, b.from.x, b.from.y, b.from.z, [end.x, end.y, end.z], [impact], 0, b.born, b.v0, b.wId);
   if (!hit) return;
   if (hit.kind === "env") {
-    if (hit.point.distanceTo(playerRig.position) < 160) {
+    const dd = hit.point.distanceTo(playerRig.position);
+    if (dd < 160) {
       const t = WEAPONS_DATA[b.wId].type;
       addBulletHoleDecal(hit.point, hit.normal, t === "SG" ? 0.038 : 0.055);
     }
+    // 敌人的子弹打在身边的墙上 / 石头上：跳弹声
+    if (b.owner !== -1 && dd < 30) sfx.playRicochet(dd, stereoPanFor(hit.point.x, hit.point.z));
   } else if (hit.kind === "door") {
     const dd = hit.point.distanceTo(playerRig.position);
     if (dd < 60) sfx.playBounce(dd * 0.6, stereoPanFor(hit.point.x, hit.point.z));

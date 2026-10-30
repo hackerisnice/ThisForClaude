@@ -28,13 +28,19 @@ class SoundEngine {
       this.muffle.frequency.value = 20000;
       this.master = this.ctx.createGain();
       this.master.gain.value = 1;
-      this.muffle.connect(this.master);
+      // 压限器：近处连射时多发枪声尾音叠在一起也不会爆音
+      this.comp = this.ctx.createDynamicsCompressor();
+      this.comp.threshold.value = -12; this.comp.knee.value = 8; this.comp.ratio.value = 6;
+      this.comp.attack.value = 0.002; this.comp.release.value = 0.12;
+      this.muffle.connect(this.comp);
+      this.comp.connect(this.master);
       this.master.connect(this.ctx.destination);
       // 共享白噪声缓冲（脚步、爆炸、烟雾都从这里取片段，不必每次重新生成）
       const len = this.ctx.sampleRate * 2;
       this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
       const d = this.noise.getChannelData(0);
       for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      this.loadSamples();
     }
     if (this.ctx.state === "suspended") this.ctx.resume();
   }
@@ -64,7 +70,46 @@ class SoundEngine {
     src.connect(f); f.connect(g); g.connect(this.out(pan));
     src.start(now, Math.random() * 1.5, dur + 0.05);
   }
-  // 枪声的衰减噪声：每种预先生成 4 份轮流用（原来每一枪都重新生成几千个采样，连射时很费）
+  // 内嵌录音解码（assets_snd.js 里的 base64 WAV）。解码是异步的，没解码好之前用合成音顶上
+  loadSamples() {
+    this.smp = {};
+    this.voices = [];
+    if (typeof SND_DATA === "undefined") return;
+    for (const key in SND_DATA) {
+      try {
+        const bin = atob(SND_DATA[key]);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        // 回调写法：老版本 iOS Safari 的 decodeAudioData 不返回 Promise
+        this.ctx.decodeAudioData(bytes.buffer, buf => { this.smp[key] = buf; }, () => {});
+      } catch (e) {}
+    }
+  }
+  // 播放一段录音：rate 变调，lp 低通截止频率（远处高频衰减得多），返回是否播成功
+  playSample(key, vol, pan, rate = 1, lp = 0, delay = 0) {
+    const buf = this.smp && this.smp[key];
+    if (!buf || vol <= 0.003) return !!buf;
+    const now = this.ctx.currentTime;
+    // 同时发声上限：手机上几十个声音叠在一起会卡，最老的先掐掉
+    this.voices = this.voices.filter(v => v.end > now);
+    if (this.voices.length >= 18) { const v = this.voices.shift(); try { v.src.stop(); } catch (e) {} }
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    const g = this.ctx.createGain();
+    g.gain.value = vol;
+    let node = src;
+    if (lp && lp < 16000) {
+      const f = this.ctx.createBiquadFilter();
+      f.type = "lowpass"; f.frequency.value = lp; f.Q.value = 0.5;
+      src.connect(f); node = f;
+    }
+    node.connect(g); g.connect(this.out(pan));
+    src.start(now + delay);
+    this.voices.push({ src, end: now + delay + buf.duration / rate });
+    return true;
+  }
+  // 合成枪声（录音还没解码好时的后备，也用于空手挥拳）
   shotBuffer(isSuppressed) {
     const key = isSuppressed ? "shotBufsS" : "shotBufsL";
     if (!this[key]) {
@@ -81,10 +126,7 @@ class SoundEngine {
     this.shotBufIdx = (this.shotBufIdx + 1) % 4;
     return this[key][this.shotBufIdx];
   }
-  playShot(isSuppressed, weight = 1.0, dist = 0, pan = 0) {
-    this.init();
-    const volScale = Math.max(0, 1 - dist / 240);
-    if (volScale <= 0.02) return;
+  synthShot(isSuppressed, weight, volScale, pan) {
     const now = this.ctx.currentTime;
     const dur = isSuppressed ? 0.065 : 0.13;
     const src = this.ctx.createBufferSource();
@@ -97,6 +139,40 @@ class SoundEngine {
     gain.gain.exponentialRampToValueAtTime(0.005, now + dur);
     src.connect(filter); filter.connect(gain); gain.connect(this.out(pan));
     src.start(now);
+  }
+  playPunch() { this.init(); this.synthShot(true, 2.0, 1, 0); }
+  // 枪声：按枪种用不同的真实录音（5.56 步枪 / 7.62 步枪 / 冲锋枪 / 霰弹 / 连狙 / 栓狙 / 消音），
+  // 远处的枪声：音量按距离衰减、高频被空气吃掉（低通），再叠一层远处传来的闷响回声
+  playShot(isSuppressed, weight = 1.0, dist = 0, pan = 0, wId = "m416") {
+    this.init();
+    const maxD = isSuppressed ? 110 : 650;
+    if (dist >= maxD) return;
+    const prof = SHOT_SOUND_PROFILE[wId] || SHOT_SOUND_PROFILE.m416;
+    const rate = (isSuppressed ? prof.sr : prof.r) * (0.97 + Math.random() * 0.06);
+    const key = isSuppressed ? "supp" : prof.k;
+    // 近处 1 → 远处按“1/距离”衰减（参考距离 18 米），最远处平滑归零
+    const fall = 1 / (1 + dist / 18) * (1 - Math.pow(dist / maxD, 2));
+    const lp = dist < 15 ? 0 : Math.max(isSuppressed ? 1400 : 900, 16000 * Math.exp(-dist / (isSuppressed ? 40 : 130)));
+    const near = isSuppressed ? Math.max(0, 1 - dist / 70) : 1 - smoothstepN(70, 320, dist);
+    const vol = (isSuppressed ? 0.5 : 0.62) * prof.g * fall;
+    const ok = this.playSample(key, vol * (isSuppressed ? 1 : 0.35 + 0.65 * near), pan, rate, lp);
+    if (!ok) { const vs = Math.max(0, 1 - dist / 240); if (vs > 0.02) this.synthShot(isSuppressed, weight, vs, pan); return; }
+    // 远处的闷响 / 山谷回声：离得越远越占主导
+    if (!isSuppressed && dist > 45) this.playSample("distant", Math.min(0.75, vol * 2.6) * smoothstepN(45, 200, dist), pan, prof.r * 0.95, 0, 0.012);
+  }
+  // 拉栓 / 泵动：栓狙用枪栓录音，S1897 用泵动录音
+  playBoltCycle(wId) {
+    this.init();
+    const sg = WEAPONS_DATA[wId] && WEAPONS_DATA[wId].type === "SG";
+    if (!this.playSample(sg ? "pump" : "bolt", 0.55, 0, sg ? 1.12 : (wId === "awm" ? 1.0 : 1.08))) this.playBoltAction();
+  }
+  // 子弹打在身边：一部分会弹飞出“啾”的跳弹声
+  playRicochet(dist, pan) {
+    this.init();
+    const v = Math.max(0, 1 - dist / 45);
+    if (v < 0.02) return;
+    if (Math.random() < 0.4 && this.playSample("rico", 0.42 * v, pan, 0.9 + Math.random() * 0.25, 0)) return;
+    this.noiseBurst(0.04, "bandpass", 3200, 3, v * 0.16, pan, 0.04);
   }
   // 脚步声：按地面材质（草地/柏油/土路/木地板/石头水泥）合成，带方位
   playFootstep(surface = "grass", vol = 0.15, pan = 0, crawl = false) {
@@ -171,6 +247,7 @@ class SoundEngine {
   // 子弹擦着耳边飞过的破空声
   playWhiz(pan) {
     this.init();
+    if (this.playSample("whiz", 0.5, pan, 0.92 + Math.random() * 0.16)) return;
     this.noiseBurst(0.07, "bandpass", 5200, 2.2, 0.22, pan, 0.07, 2600);
     this.noiseBurst(0.03, "highpass", 6500, 0.7, 0.12, pan, 0.03);
   }
@@ -249,6 +326,23 @@ class SoundEngine {
   }
 }
 const sfx = new SoundEngine();
+
+function smoothstepN(a, b, x) { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
+
+// 每把枪用哪段录音（k）、播放速率 r（>1 更尖更脆，<1 更沉）、消音时速率 sr、音量 g
+const SHOT_SOUND_PROFILE = {
+  m416: { k: "ar556", r: 1.0, sr: 1.0, g: 1 }, aug: { k: "ar556", r: 1.04, sr: 1.04, g: 1 }, scar: { k: "ar556", r: 0.95, sr: 0.97, g: 1 },
+  m16a4: { k: "ar556", r: 1.02, sr: 1.0, g: 1 }, m249: { k: "ar556", r: 0.93, sr: 0.95, g: 1.05 },
+  beryl: { k: "ar762", r: 1.04, sr: 0.94, g: 1.05 }, akm: { k: "ar762", r: 1.0, sr: 0.92, g: 1.05 }, mk47: { k: "ar762", r: 0.95, sr: 0.9, g: 1.05 },
+  dp28: { k: "ar762", r: 0.88, sr: 0.9, g: 1.1 },
+  ump45: { k: "smg", r: 0.9, sr: 1.05, g: 0.9 }, vector: { k: "smg", r: 1.1, sr: 1.15, g: 0.85 }, uzi: { k: "smg", r: 1.14, sr: 1.18, g: 0.85 },
+  mp5k: { k: "smg", r: 1.0, sr: 1.1, g: 0.88 },
+  s1897: { k: "sg", r: 1.0, sr: 1, g: 1.1 }, s686: { k: "sg", r: 0.95, sr: 1, g: 1.15 }, s12k: { k: "sg", r: 1.06, sr: 1, g: 1.05 }, dbs: { k: "sg", r: 1.03, sr: 1, g: 1.05 },
+  slr: { k: "dmr", r: 0.96, sr: 0.88, g: 1.1 }, sks: { k: "dmr", r: 1.02, sr: 0.9, g: 1.05 }, mini14: { k: "dmr", r: 1.12, sr: 0.98, g: 1.0 },
+  dragunov: { k: "dmr", r: 0.92, sr: 0.86, g: 1.1 }, mk14: { k: "dmr", r: 0.98, sr: 0.88, g: 1.1 },
+  kar98k: { k: "sr", r: 1.0, sr: 0.84, g: 1.15 }, m24: { k: "sr", r: 1.05, sr: 0.86, g: 1.1 }, awm: { k: "sr", r: 0.9, sr: 0.8, g: 1.25 },
+  amr: { k: "sr", r: 0.76, sr: 0.75, g: 1.35 }
+};
 
 // 声源相对镜头的左右方位（-1 左 ~ 1 右），用于脚步/枪声/爆炸定位
 function stereoPanFor(x, z) {

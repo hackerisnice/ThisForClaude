@@ -356,6 +356,19 @@ const dirtRoadTex = makeCanvasTexture(128, (ctx, s) => {
     o[0] = 150 * k; o[1] = 124 * k; o[2] = 92 * k;
   });
 });
+// 照片版土路：沙土照片 + 两道压实的车辙 + 两边渐渐长草（与地面过渡自然）
+upgradeToPhoto(dirtRoadTex, "dirtroad", (ctx, s) => {
+  const band = (v0, v1, color) => { ctx.fillStyle = color; ctx.fillRect(0, v0 * s, s, (v1 - v0) * s); };
+  for (const c of [0.3, 0.7]) {
+    band(c - 0.07, c + 0.07, "rgba(70,52,34,0.10)");
+    band(c - 0.045, c + 0.045, "rgba(70,52,34,0.12)");
+  }
+  for (let i = 0; i < 6; i++) {
+    const a = 0.16 * (1 - i / 6);
+    band(i * 0.012, (i + 1) * 0.012, `rgba(74,86,40,${a})`);
+    band(1 - (i + 1) * 0.012, 1 - i * 0.012, `rgba(74,86,40,${a})`);
+  }
+});
 const asphaltRoadTex = makeAsphaltTexture(false);
 const roadMaterials = {
   asphalt: new THREE.MeshLambertMaterial({ map: asphaltRoadTex, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),

@@ -9,6 +9,7 @@ const TER_N = TERRAIN_SIZE / TER_CELL;  // 每边格子数
 const TER_V = TER_N + 1;                // 每边顶点数
 const TER_HALF = TERRAIN_SIZE / 2;
 const terrainHeights = new Float32Array(TER_V * TER_V);
+const terrainFixed = new Uint8Array(TER_V * TER_V); // 限坡度时不能动的点：路面、平地、遗迹山顶、房子地基
 const RUINS_HILL_H = 26;                // 遗迹所在山顶比四周平地高多少
 const RUINS_PLATEAU_R = 84;             // 山顶平台半径（遗迹全部建在 50 米内，再留一个三角形的余量）
 
@@ -95,31 +96,99 @@ function terrainFlattenRect(x0, z0, x1, z1, level = 0, ramp = 40) {
     const d = rectDist(x, z, X0, Z0, X1, Z1);
     const w = d <= 0 ? 1 : 1 - smoothstep(0, ramp, d);
     terrainHeights[k] += (level - terrainHeights[k]) * w;
+    if (d <= 0) terrainFixed[k] = 1;
   });
+}
+// 坡度限制：相邻两点高差超过 0.5 倍水平距离（约 27°）就削高补低（固定点不动，只动旁边的），
+// 人和 AI 都能走上去，看起来也不像悬崖
+function terrainRelaxSlopes() {
+  const H = terrainHeights, fixed = terrainFixed, maxD = 0.5 * TER_CELL;
+  for (let pass = 0; pass < 60; pass++) {
+    let moved = 0;
+    for (let j = 0; j < TER_V; j++) {
+      for (let i = 0; i < TER_V; i++) {
+        const k = j * TER_V + i;
+        for (let a = 0; a < 2; a++) {
+          const di = a === 0 ? 1 : 0, dj = 1 - di;
+          if (i + di > TER_N || j + dj > TER_N) continue;
+          const q = (j + dj) * TER_V + i + di, d = H[k] - H[q];
+          if (Math.abs(d) <= maxD || (fixed[k] && fixed[q])) continue;
+          const ex = (Math.abs(d) - maxD) * Math.sign(d);
+          if (fixed[k]) H[q] += ex;
+          else if (fixed[q]) H[k] -= ex;
+          else { H[k] -= ex / 2; H[q] += ex / 2; }
+          moved++;
+        }
+      }
+    }
+    if (!moved) break;
+  }
 }
 
 // ---------------------------------------------------------------------------
 // 高度场生成
 // ---------------------------------------------------------------------------
-// 野外：大尺度噪声决定哪里是丘陵（约三分之一）、哪里是平原；丘陵上叠山包和山脊；平原有一两米的缓坡
+// 野外：大尺度噪声决定哪里是丘陵（约六成）、哪里是平原；丘陵上叠山包和山脊（最高 60 米左右）；平原有一两米的缓坡；
+// 再加上几座远离城镇和公路的大山（见 TERRAIN_MOUNTAINS）
 function terrainWild(x, z) {
-  const n = fbm(x / 640 + 11.3, z / 640 - 4.1, 731, 4);
-  const hill = smoothstep(0.46, 0.66, n);
+  const n = fbm(x / 600 + 11.3, z / 600 - 4.1, 731, 4);
+  const hill = smoothstep(0.4, 0.62, n);
   let h = 0;
   if (hill > 0) {
-    const m = fbm(x / 230 - 2.2, z / 230 + 7.5, 737, 3);
-    const r = 1 - Math.abs(fbm(x / 420 + 5.1, z / 420 + 1.7, 743, 3) * 2 - 1);
-    h = hill * (4 + 38 * m * m + 7 * r * r);
+    const m = fbm(x / 240 - 2.2, z / 240 + 7.5, 737, 3);
+    const r = 1 - Math.abs(fbm(x / 400 + 5.1, z / 400 + 1.7, 743, 3) * 2 - 1);
+    h = hill * (8 + 64 * m * m + 14 * r * r);
   }
-  return h + fbm(x / 160 + 3.7, z / 160 - 8.2, 751, 2) * 1.6;
+  for (let i = 0; i < TERRAIN_MOUNTAINS.length; i++) {
+    const M = TERRAIN_MOUNTAINS[i], dx = x - M.x, dz = z - M.z, d2 = dx * dx + dz * dz;
+    if (d2 > 9 * M.s * M.s) continue;
+    // 钟形山体，山坡上叠一点起伏（不是光溜溜的馒头）
+    const k = Math.exp(-d2 / (M.s * M.s));
+    h = Math.max(h, M.h * k * (0.82 + 0.36 * fbm(x / 140 + i * 3.1, z / 140 - i * 1.7, 771, 3)));
+  }
+  return h + fbm(x / 160 + 3.7, z / 160 - 8.2, 751, 2) * 2;
 }
+// 大山：在 100 米网格上找离城镇、学校、遗迹、河、公路都最远的几处（每次开局位置一样，地图有辨识度）
+const TERRAIN_MOUNTAINS = (() => {
+  const cands = [];
+  for (let x = -1150; x <= 1150; x += 100) {
+    for (let z = -1150; z <= 1150; z += 100) {
+      let room = Math.min(Math.abs(z - RIVER_Z) - RIVER_HALF - 60, roadEdgeDistance(x, z, 420) - 30);
+      POIS.forEach(p => { room = Math.min(room, Math.hypot(x - p.x, z - p.z) - p.r - (p.key === "ruins" ? 260 : 120)); });
+      if (room > 130) cands.push({ x, z, room });
+    }
+  }
+  cands.sort((a, b) => b.room - a.room);
+  const out = [];
+  for (const c of cands) {
+    if (out.length >= 5) break;
+    if (out.some(o => Math.hypot(o.x - c.x, o.z - c.z) < 600)) continue;
+    // 山脚半径受周围空地限制；高度 = 半径 × 0.42（最陡处约 20°，人和 AI 都爬得上去）
+    const s = Math.min(230, c.room * 0.6);
+    out.push({ x: c.x, z: c.z, s, h: Math.min(105, s * 0.42) });
+  }
+  return out;
+})();
 // 遗迹那座山：山顶平台 + 四周缓坡（坡上有点起伏，不是一个圆锥）
 function ruinsHillHeight(dr, x, z) {
   if (dr >= 220) return 0;
   const k = 1 - smoothstep(RUINS_PLATEAU_R, 215, dr);
   return RUINS_HILL_H * Math.pow(k, 0.85) + (fbm(x / 70, z / 70, 761, 2) - 0.5) * 7 * k * (1 - k);
 }
-// 必须是平地的地方（1 = 完全平）：城镇（方形范围盖住整片房子）、学校、河两岸
+// 农场的位置在生成地形之前就选好（每局随机），那一片留成平地（丘陵变多以后，随便找很难找到能盖农场的平地）
+const TERRAIN_FARM_SITES = (() => {
+  const out = [];
+  for (let i = 0; i < 600 && out.length < 24; i++) {
+    const x = (Math.random() - 0.5) * (MAP_SIZE - 260), z = (Math.random() - 0.5) * (MAP_SIZE - 260);
+    if (POIS.some(p => Math.hypot(p.x - x, p.z - z) < p.r + 90)) continue;
+    if (Math.abs(z + 7 - RIVER_Z) < RIVER_HALF + 70 || roadEdgeDistance(x + 13, z + 7, 80) < 45) continue;
+    if (out.some(o => Math.hypot(o.x - x, o.z - z) < 220)) continue;
+    if (TERRAIN_MOUNTAINS.some(m => Math.hypot(m.x - x, m.z - z) < m.s * 1.6)) continue;
+    out.push({ x, z });
+  }
+  return out;
+})();
+// 必须是平地的地方（1 = 完全平）：城镇（方形范围盖住整片房子）、学校、河两岸、农场
 const TERRAIN_TOWNS = POIS.filter(p => p.key.endsWith("city")).map(p => ({ x: p.x, z: p.z, core: (p.key === "pcity" ? 4 : 2) * 46 + 45 }));
 function terrainFlatMask(x, z) {
   let f = 1 - smoothstep(RIVER_HALF + 20, RIVER_HALF + 110, Math.abs(z - RIVER_Z));
@@ -130,6 +199,10 @@ function terrainFlatMask(x, z) {
   }
   const s = POI_BY_KEY.school;
   f = Math.max(f, 1 - smoothstep(30, 150, rectDist(x, z, s.x - 46, s.z - 44, s.x + 64, s.z + 40)));
+  for (let i = 0; i < TERRAIN_FARM_SITES.length; i++) {
+    const fs = TERRAIN_FARM_SITES[i], d = Math.hypot(x - fs.x - 13, z - fs.z - 7);
+    if (d < 190) f = Math.max(f, 1 - smoothstep(58, 190, d));
+  }
   return f;
 }
 
@@ -193,7 +266,7 @@ function terrainFlatMask(x, z) {
     const hs = roadPtsH[polyIdx.get(poly)];
     bestD[k] = d; bestHW[k] = hw; bestH[k] = hs[i] + (hs[i + 1] - hs[i]) * t;
   });
-  const fixed = new Uint8Array(H.length); // 坡度限制时不动的点：路面、平地、遗迹山顶
+  const fixed = terrainFixed;
   for (let k = 0; k < H.length; k++) {
     if (bestD[k] > 1e8) continue;
     const w = 1 - smoothstep(bestHW[k] + 4, bestHW[k] + 34, bestD[k]);
@@ -213,7 +286,7 @@ function terrainFlatMask(x, z) {
     }
   }
 
-  // 4) 坡度限制：相邻两点高差超过 0.45 倍水平距离（约 24°）就削高补低，人和 AI 都能走上去，看起来也不像悬崖
+  // 4) 坡度限制（盖完房子压平地基后还会再做一遍，见 mapgen.js 末尾）
   for (let j = 0; j < TER_V; j++) {
     for (let i = 0; i < TER_V; i++) {
       const k = j * TER_V + i, x = i * TER_CELL - TER_HALF, z = j * TER_CELL - TER_HALF;
@@ -221,68 +294,64 @@ function terrainFlatMask(x, z) {
           Math.hypot(x - ruins.x, z - ruins.z) < RUINS_PLATEAU_R + 20) fixed[k] = 1;
     }
   }
-  const maxD = 0.45 * TER_CELL;
-  for (let pass = 0; pass < 40; pass++) {
-    let moved = 0;
-    for (let j = 0; j < TER_V; j++) {
-      for (let i = 0; i < TER_V; i++) {
-        const k = j * TER_V + i;
-        for (const [di, dj] of [[1, 0], [0, 1]]) {
-          if (i + di > TER_N || j + dj > TER_N) continue;
-          const q = (j + dj) * TER_V + i + di, d = H[k] - H[q];
-          if (Math.abs(d) <= maxD) continue;
-          const ex = (Math.abs(d) - maxD) * Math.sign(d);
-          if (fixed[k] && fixed[q]) continue;
-          if (fixed[k]) H[q] += ex;
-          else if (fixed[q]) H[k] -= ex;
-          else { H[k] -= ex / 2; H[q] += ex / 2; }
-          moved++;
-        }
-      }
-    }
-    if (!moved) break;
-  }
-
+  terrainRelaxSlopes();
 })();
 
 // ---------------------------------------------------------------------------
 // 渲染：5×5 块（每块 1000 米见方，视野外的块自动不画），顶点颜色按坡度 / 地点上色
 // ---------------------------------------------------------------------------
 const TERRAIN_CHUNKS = 5;
+// 地面三层照片贴图混合：草地（两种尺度叠加，远看不出重复）/ 泥土 / 岩石，混合比例存在每个顶点上
 const terrainMaterial = new THREE.MeshLambertMaterial({ map: grassTex, vertexColors: true });
+terrainMaterial.onBeforeCompile = sh => {
+  sh.uniforms.rockMap = { value: rockTex };
+  sh.uniforms.dirtMap = { value: dirtTex };
+  sh.vertexShader = "attribute vec2 tblend;\nvarying vec2 vTBlend;\n" +
+    sh.vertexShader.replace("#include <uv_vertex>", "#include <uv_vertex>\n  vTBlend = tblend;");
+  sh.fragmentShader = "uniform sampler2D rockMap;\nuniform sampler2D dirtMap;\nvarying vec2 vTBlend;\n" +
+    sh.fragmentShader.replace("#include <map_fragment>", [
+      "vec3 tGrass = mix(texture2D(map, vUv).rgb, texture2D(map, vUv * 0.231 + vec2(0.37, 0.61)).rgb, 0.45);",
+      "vec3 tDirt = texture2D(dirtMap, vUv * 0.83).rgb;",
+      // 岩石不吃顶点染色（顶点颜色是给草地做明暗 / 枯黄变化的，染到岩石上会变成一片土黄）
+      "vec3 tRock = texture2D(rockMap, vUv * 0.57).rgb * vec3(0.44, 0.44, 0.46) / max(vColor, vec3(0.5));",
+      "diffuseColor.rgb *= mix(mix(tGrass, tDirt, vTBlend.y), tRock, vTBlend.x);"
+    ].join("\n"));
+};
 const terrainChunks = [];
 grassTex.repeat.set(TERRAIN_SIZE / 7, TERRAIN_SIZE / 7);
+// out：[r, g, b（顶点染色）, 岩石比例, 泥土比例]
 function terrainColorAt(x, z, h, slope, out) {
   const n = fbm(x / 170, z / 170, 3, 4);
   const n2 = valueNoise(x / 42, z / 42, 9);
   const dry = smoothstep(0.58, 0.74, n);
-  const bank = 1 - smoothstep(RIVER_HALF - 4, RIVER_HALF + 6, Math.abs(z - RIVER_Z));
-  const rocky = Math.max(smoothstep(45, 120, h), smoothstep(0.32, 0.6, slope) * 0.85);
-  let r = 0.96 + (n - 0.5) * 0.3 + (n2 - 0.5) * 0.12 + dry * 0.22;
+  const bank = 1 - smoothstep(RIVER_HALF - 4, RIVER_HALF + 8, Math.abs(z - RIVER_Z));
+  // 陡坡和高山上露出岩石（加一点噪声，岩石和草地的边界不是一条直线）
+  const rock = Math.min(1, Math.max(smoothstep(65, 115, h) * 0.75, smoothstep(0.3, 0.56, slope)) * (0.8 + n2 * 0.4));
+  let r = 0.96 + (n - 0.5) * 0.3 + (n2 - 0.5) * 0.12 + dry * 0.2;
   let g = 0.98 + (n - 0.5) * 0.26 + (n2 - 0.5) * 0.1 + dry * 0.05;
   let b = 0.95 + (n - 0.5) * 0.2 - dry * 0.08;
-  r += bank * 0.35; g += bank * 0.12; b += bank * 0.05;
-  // 山坡背阴处略深、高处略黄（看得出起伏）
+  // 山坡上略黄（看得出起伏）
   const hk = smoothstep(4, 36, h) * (1 - smoothstep(45, 90, h));
   r += hk * 0.1; g += hk * 0.04; b -= hk * 0.04;
-  // 村镇地面偏土色、遗迹周边偏灰白碎石色
+  // 村镇地面、河岸、干燥的草地露出泥土；遗迹周边是碎石泥土
+  let dirt = Math.max(bank * 0.85, dry * 0.3 * n2);
+  let stony = 0;
   for (let i = 0; i < POIS.length; i++) {
     const p = POIS[i];
     const k = 1 - smoothstep(p.r * 0.55, p.r * 1.05, Math.hypot(x - p.x, z - p.z));
     if (k <= 0) continue;
-    if (p.key === "ruins") { r += k * 0.32; g += k * 0.2; b += k * 0.28; }
-    else { r += k * 0.16; g += k * 0.04; b -= k * 0.02; }
+    if (p.key === "ruins") { dirt = Math.max(dirt, k * 0.55); stony = Math.max(stony, k * 0.35); }
+    else dirt = Math.max(dirt, k * (0.35 + 0.3 * n2));
   }
-  r = r * (1 - rocky) + 1.05 * rocky; g = g * (1 - rocky) + 0.92 * rocky; b = b * (1 - rocky) + 1.0 * rocky;
-  out[0] = r; out[1] = g; out[2] = b;
+  out[0] = r; out[1] = g; out[2] = b; out[3] = Math.max(rock, stony); out[4] = Math.min(1, dirt);
 }
 function buildTerrainMesh() {
   const H = terrainHeights, per = TER_N / TERRAIN_CHUNKS, side = per + 1;
-  const col = [0, 0, 0], nrm = new THREE.Vector3();
+  const col = [0, 0, 0, 0, 0], nrm = new THREE.Vector3();
   for (let cj = 0; cj < TERRAIN_CHUNKS; cj++) {
     for (let ci = 0; ci < TERRAIN_CHUNKS; ci++) {
       const pos = new Float32Array(side * side * 3), nor = new Float32Array(side * side * 3);
-      const uv = new Float32Array(side * side * 2), cols = new Float32Array(side * side * 3);
+      const uv = new Float32Array(side * side * 2), cols = new Float32Array(side * side * 3), blend = new Float32Array(side * side * 2);
       for (let j = 0; j < side; j++) {
         for (let i = 0; i < side; i++) {
           const gi = ci * per + i, gj = cj * per + j, v = j * side + i;
@@ -296,6 +365,7 @@ function buildTerrainMesh() {
           uv[v * 2] = (x + TER_HALF) / TERRAIN_SIZE; uv[v * 2 + 1] = (z + TER_HALF) / TERRAIN_SIZE;
           terrainColorAt(x, z, h, Math.sqrt(1 - nrm.y * nrm.y) / Math.max(0.2, nrm.y), col);
           cols[v * 3] = col[0]; cols[v * 3 + 1] = col[1]; cols[v * 3 + 2] = col[2];
+          blend[v * 2] = col[3]; blend[v * 2 + 1] = col[4];
         }
       }
       const idx = new Uint16Array(per * per * 6);
@@ -313,6 +383,7 @@ function buildTerrainMesh() {
       g.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
       g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
       g.setAttribute("color", new THREE.BufferAttribute(cols, 3));
+      g.setAttribute("tblend", new THREE.BufferAttribute(blend, 2));
       g.setIndex(new THREE.BufferAttribute(idx, 1));
       g.computeBoundingSphere();
       const m = new THREE.Mesh(g, terrainMaterial);

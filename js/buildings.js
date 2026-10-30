@@ -71,7 +71,7 @@ function isRectBuildable(x0, z0, x1, z1, margin) {
   if (roadEdgeDistance(cx, cz, hd + margin + 10) < hd + margin) return false;
   if (isRectReserved(x0, z0, x1, z1, margin)) return false;
   // 山坡上不盖房（只在平地 / 缓坡上盖，盖的时候把底下压平）
-  return terrainMaxDeviation(x0 - 25, z0 - 25, x1 + 25, z1 + 25, 0) < 2.5;
+  return terrainMaxDeviation(x0 - 25, z0 - 25, x1 + 25, z1 + 25, 0) < 4.5;
 }
 
 // 沿 x 方向（位于 z = fixed）或 z 方向（位于 x = fixed）的一段墙，按门窗开口切成若干实心块
@@ -103,14 +103,15 @@ function buildWall(axis, fixed, from, to, yBase, height, thick, color, openings,
 }
 
 // 山墙双坡屋顶（纯外观 + 子弹/视线代理；不可站立，跳伞落上去会落进顶层室内）
-function buildGableRoof(cx, cz, w, d, H, roofColor, wallColor) {
+function buildGableRoof(cx, cz, w, d, H, roofColor, wallColor, wallKey = "plaster") {
   const alongX = w >= d;
   const span = alongX ? d : w, length = alongX ? w : d;
   const run = span / 2 + 0.5, rh = Math.min(3.2, span * 0.32);
   const L = Math.hypot(run, rh), ang = Math.atan2(rh, run);
   for (const side of [-1, 1]) {
-    if (alongX) addSolidBox(cx, H + rh / 2 + 0.05, cz + side * run / 2, length + 1.0, 0.18, L, roofColor, { rotX: side * ang, ao: false });
-    else addSolidBox(cx + side * run / 2, H + rh / 2 + 0.05, cz, L, 0.18, length + 1.0, roofColor, { rotZ: -side * ang, ao: false });
+    // 瓦片照片：屋脊沿 X 用 roof，沿 Z 用转了 90° 的 roofR（瓦片一排排都平行于屋脊）
+    if (alongX) addSolidBox(cx, H + rh / 2 + 0.05, cz + side * run / 2, length + 1.0, 0.18, L, roofColor, { key: "roof", rotX: side * ang, ao: false });
+    else addSolidBox(cx + side * run / 2, H + rh / 2 + 0.05, cz, L, 0.18, length + 1.0, roofColor, { key: "roofR", rotZ: -side * ang, ao: false });
   }
   // 两端山墙三角
   const tri = [];
@@ -129,7 +130,7 @@ function buildGableRoof(cx, cz, w, d, H, roofColor, wallColor) {
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(tri, 3));
   g.computeVertexNormals();
-  addSolidGeometry(g, wallColor, "plaster");
+  addSolidGeometry(g, wallColor, wallKey);
 }
 
 // 楼梯井：贴着西墙的双跑楼梯（两条并排的坡道交替上下），四周有隔墙，楼梯口有护栏
@@ -247,7 +248,10 @@ function buildCatwalk(cx, ix0, ix1, iz1, by = 0) {
 }
 
 const FACADE_COLORS = [0xc2b29b, 0x9b7653, 0x7a8b99, 0xb86b52, 0x8c857b, 0xd1c7b0, 0xa39a86, 0x8f9a8a, 0xb5a48a, 0xc9b38f];
-const ROOF_COLORS = [0x4a413b, 0x6b3a2e, 0x3f4448, 0x6a4b3a, 0x52575b];
+const ROOF_COLORS = [0x6a5d55, 0x8a4a3a, 0x5a6066, 0x7d5d48, 0x6b7075];
+// 这几种外墙颜色的房子改成红砖墙（砖墙照片本身带颜色，只轻微染色）
+const BRICK_FACADES = [0x9b7653, 0xb86b52];
+const BRICK_TINTS = [0xffffff, 0xf2e6de, 0xe6dcd6, 0xdcd2c8];
 const pickColor = arr => arr[Math.floor(Math.random() * arr.length)];
 
 // 通用建筑生成器：多层（每层有窗、底层南北开门）、楼梯井、平顶/双坡顶、室内家具与物资。
@@ -255,13 +259,15 @@ const pickColor = arr => arr[Math.floor(Math.random() * arr.length)];
 function buildBuilding(o) {
   const { cx, cz, w, d } = o;
   const by = o.baseY || 0;
-  terrainFlattenRect(cx - w / 2, cz - d / 2, cx + w / 2, cz + d / 2, by);
+  terrainFlattenRect(cx - w / 2, cz - d / 2, cx + w / 2, cz + d / 2, by, 60);
   const floors = o.floors || 1;
   const wallH = o.wallH || FLOOR_H;
   const H = floors === 1 ? wallH : floors * FLOOR_H;
   const t = 0.4;
-  const color = o.color || pickColor(FACADE_COLORS);
-  const key = o.key || "plaster";
+  const color0 = o.color || pickColor(FACADE_COLORS);
+  const brick = !o.key && BRICK_FACADES.includes(color0);
+  const color = brick ? pickColor(BRICK_TINTS) : color0;
+  const key = o.key || (brick ? "brick" : "plaster");
   const ix0 = cx - w / 2 + t / 2, ix1 = cx + w / 2 - t / 2;
   const iz0 = cz - d / 2 + t / 2, iz1 = cz + d / 2 - t / 2;
   const doorW = o.doorW || 2.6, doorH = o.doorH || 2.6;
@@ -346,17 +352,17 @@ function buildBuilding(o) {
   let roofY = null, ext = null;
   if (o.roof === "gable") {
     addSolidBox(cx, by + H, cz, w, 0.2, d, o.floorColor || 0x6a5442, { key: "wood", collider: false, ao: false });
-    buildGableRoof(cx, cz, w, d, by + H + 0.1, o.roofColor || pickColor(ROOF_COLORS), color);
+    buildGableRoof(cx, cz, w, d, by + H + 0.1, o.roofColor || pickColor(ROOF_COLORS), color, key);
   } else if (o.roof !== "none") {
     // 平屋顶 + 女儿墙（可站立；跳伞可以落在楼顶）。多层楼：楼梯通到屋顶，屋顶上开一个楼梯口；
     // 单层房：外墙边有室外楼梯上屋顶，女儿墙在楼梯平台处留口子
-    const rc = o.roofColor || 0x4a413b;
+    const rc = o.roofColor || 0x857d76;
     roofY = by + H + 0.2;
     const X0 = cx - w / 2 - 0.3, X1 = cx + w / 2 + 0.3, Z0 = cz - d / 2 - 0.3, Z1 = cz + d / 2 + 0.3;
     const rl = stairs && stairs.roofLane >= 0 ? stairs.lanes[stairs.roofLane] : null;
     const roofRects = rl ? rectMinusHole(X0, Z0, X1, Z1, rl[0], stairs.zA, rl[1], stairs.zB) : [[X0, Z0, X1, Z1]];
     roofRects.forEach(([a, b, c, e]) => {
-      addSolidBox((a + c) / 2, by + H + 0.05, (b + e) / 2, c - a, 0.3, e - b, rc, { collider: false, ao: false });
+      addSolidBox((a + c) / 2, by + H + 0.05, (b + e) / 2, c - a, 0.3, e - b, rc, { key: o.roofKey || "concrete", collider: false, ao: false });
       addWalkRect(a, b, c, e, roofY, by + H - 0.1);
     });
     // 有侧门通道连着别的楼的那一侧不放室外楼梯

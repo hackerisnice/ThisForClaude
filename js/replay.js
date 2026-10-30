@@ -129,9 +129,9 @@ function makeReplayClip(t0, t1, meta) {
 // 事件：开枪（shooter：-1 = 玩家，>=0 = AI 编号）。ends = 每发子弹的终点 [x,y,z,...]，
 // impacts = 每发的结果（0 擦身飞过 / 1 打中人 / 2 打在地面墙面），连射每发间隔 gap 秒
 // t = 开枪时刻（子弹落点要等飞到才知道，所以可能晚于开枪时刻才记录；按时间顺序插入）；speed = 弹速
-function replayShotEvent(shooter, fx, fy, fz, ends, impacts, gap = 0.09, t = replayRec.clock, speed = 600) {
+function replayShotEvent(shooter, fx, fy, fz, ends, impacts, gap = 0.09, t = replayRec.clock, speed = 600, w = "m416") {
   if (replayState.active) return;
-  const ev = replayRec.events, e = { t, type: "shot", s: shooter, fx, fy, fz, ends, impacts, gap, speed };
+  const ev = replayRec.events, e = { t, type: "shot", s: shooter, fx, fy, fz, ends, impacts, gap, speed, w };
   let i = ev.length;
   while (i > 0 && ev[i - 1].t > t) i--;
   ev.splice(i, 0, e);
@@ -164,7 +164,7 @@ function replayBotShot(bot, tx, ty, tz, hit, n = 1) {
     ends.push(m.x + _rpDir.x * len, m.y + _rpDir.y * len, m.z + _rpDir.z * len);
     impacts.push(impact);
   }
-  replayShotEvent(bot.id, m.x, m.y, m.z, ends, impacts, 0.09, replayRec.clock, bot.weaponKey ? bulletSpeedOf(bot.weaponKey) : 600);
+  replayShotEvent(bot.id, m.x, m.y, m.z, ends, impacts, 0.09, replayRec.clock, bot.weaponKey ? bulletSpeedOf(bot.weaponKey) : 600, bot.weaponKey || "m416");
 }
 // 开门 / 关门
 function replayDoorEvent(id, open) {
@@ -531,7 +531,7 @@ function applyReplayFrame(clip, t) {
 function triggerReplayEvent(e) {
   if (e.type === "shot") {
     for (let k = 0; k < e.impacts.length; k++) {
-      rpTracers.push({ born: e.t + k * e.gap, fx: e.fx, fy: e.fy, fz: e.fz, tx: e.ends[k * 3], ty: e.ends[k * 3 + 1], tz: e.ends[k * 3 + 2], impact: e.impacts[k], speed: e.speed || TRACER_SPEED, done: false, flashed: false });
+      rpTracers.push({ born: e.t + k * e.gap, fx: e.fx, fy: e.fy, fz: e.fz, tx: e.ends[k * 3], ty: e.ends[k * 3 + 1], tz: e.ends[k * 3 + 2], impact: e.impacts[k], speed: e.speed || TRACER_SPEED, w: e.w, done: false, flashed: false });
     }
   } else if (e.type === "fx") {
     const p = new THREE.Vector3(e.x, e.y + 0.4, e.z);
@@ -569,7 +569,7 @@ function updateReplayTracers(t) {
       const now = performance.now();
       if (now - replayState.lastShotSound > 45) {
         replayState.lastShotSound = now;
-        sfx.playShot(false, 1.0, camPos.distanceTo(new THREE.Vector3(tr.fx, tr.fy, tr.fz)), 0);
+        sfx.playShot(false, 1.0, camPos.distanceTo(new THREE.Vector3(tr.fx, tr.fy, tr.fz)), 0, tr.w);
       }
     }
     if (s - TRACER_LEN > dist) {

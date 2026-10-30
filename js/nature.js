@@ -5,40 +5,141 @@
 // 3.15 植被与岩石：成片树林 + 零散树木、岩石、草垛、灌木
 // ---------------------------------------------------------------------------
 const trunkMat = new THREE.MeshLambertMaterial({ color: 0x4a3525 });
-const leafMat = new THREE.MeshLambertMaterial({ color: 0x2d4c2b });
 const rockMat = new THREE.MeshLambertMaterial({ color: 0x6b6e70 });
 
-// 树冠：低多边形硬边造型（松树叠层锥 / 阔叶树团簇），每棵树色调与大小随机，纯视觉不影响碰撞
-const FOLIAGE_COLORS = [0x2d4c2b, 0x355a2c, 0x2b5034, 0x41602e, 0x3a5526];
-const foliageConeGeo = (() => { const g = new THREE.ConeGeometry(1, 1, 7).toNonIndexed(); g.computeVertexNormals(); return g; })();
-const foliageBlobGeo = new THREE.IcosahedronGeometry(1, 0);
 const TRUNK_GEO = new THREE.CylinderGeometry(0.4, 0.5, 3.6, 7);
 TRUNK_GEO.userData.shared = true;
 const ROCK_GEO = new THREE.DodecahedronGeometry(1.6, 0);
-const _foliageTmp = new THREE.Mesh(foliageConeGeo, leafMat);
-function addTreeFoliageToBatch(tx, tz, gy = 0) {
-  const col = FOLIAGE_COLORS[Math.floor(Math.random() * FOLIAGE_COLORS.length)];
-  const s = 0.85 + Math.random() * 0.4;
-  const shadeFn = p => 0.68 + 0.32 * smoothstep(2.6, 8.5, p.y - gy);
-  const put = (geo, x, y, z, sx, sy, sz, rotY) => {
-    _foliageTmp.geometry = geo;
-    _foliageTmp.position.set(x, gy + y, z);
-    _foliageTmp.scale.set(sx, sy, sz);
-    _foliageTmp.rotation.set(0, rotY, 0);
-    addToStaticBatch(_foliageTmp, "leaf", col, { ao: false, shadeFn });
+
+// ---------------------------------------------------------------------------
+// 写实树木：Poly Haven（CC0）的真实树模型（两种冷杉 + 一种阔叶树）离线渲染成贴图，
+// 游戏里每棵树是两张互相垂直的面片（正反两面，透明处裁掉），顶点数只有低多边形树冠的零头。
+// 每张图：贴图集里的 uv 范围 + 这张图对应的真实宽高（米），图的底边中点就是树根
+// ---------------------------------------------------------------------------
+const TREE_TYPES = [
+  { views: [{ u0: 0, v0: 0.5, u1: 0.25, v1: 1, w: 5.2, h: 10.4 }, { u0: 0.25, v0: 0.5, u1: 0.5, v1: 1, w: 5.548, h: 11.096 }], s0: 0.95, s1: 1.35, trunkR: 0.3 },
+  { views: [{ u0: 0.5, v0: 0.5, u1: 0.75, v1: 1, w: 4.503, h: 9.006 }, { u0: 0.75, v0: 0.5, u1: 1, v1: 1, w: 4.151, h: 8.302 }], s0: 1.0, s1: 1.4, trunkR: 0.3 },
+  { views: [{ u0: 0, v0: 0, u1: 0.5, v1: 0.5, w: 4.412, h: 4.412 }, { u0: 0.5, v0: 0, u1: 1, v1: 0.5, w: 6.042, h: 6.042 }], s0: 1.9, s1: 2.5, trunkR: 0.45 }
+];
+// 灌木：只取阔叶树树冠那一段贴图（不要树干），贴地放，看起来就是一丛浓密的灌木
+const BUSH_TYPE = { views: TREE_TYPES[2].views.map(v => ({ u0: v.u0, u1: v.u1, v0: v.v0 + (v.v1 - v.v0) * 0.3, v1: v.v0 + (v.v1 - v.v0) * 0.8, w: v.w, h: v.h * 0.5 })) };
+const treeImpTex = new THREE.Texture();
+treeImpTex.anisotropy = MAX_ANISO;
+const treeImpMat = new THREE.MeshLambertMaterial({ map: treeImpTex, vertexColors: true, alphaTest: 0.5, visible: false });
+// 阴影也按叶子的形状投（透明处不投影）
+const treeImpDepthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: treeImpTex, alphaTest: 0.5 });
+const treeImpMeshes = [];
+let treeImpReady = false;
+// 颜色 JPEG + 透明度 PNG 拼成一张带透明的贴图，再自己做缩小的各级 mipmap：
+// 每级都把透明度适当放大，保持“不透明部分”的面积不变 —— 否则远处的树会越缩越稀，最后只剩树干
+function loadTreeImpostors() {
+  if (typeof TEX_DATA === "undefined" || !TEX_DATA.treeC) return;
+  const ci = new Image(), ai = new Image();
+  let n = 0;
+  const pixels = (img) => {
+    const cv = document.createElement("canvas");
+    cv.width = img.width; cv.height = img.height;
+    const ctx = cv.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    return ctx.getImageData(0, 0, img.width, img.height);
   };
-  if (Math.random() < 0.55) {
-    put(foliageConeGeo, tx, 3.9 * s, tz, 2.7 * s, 3.3 * s, 2.7 * s, Math.random() * 6);
-    put(foliageConeGeo, tx, 5.3 * s, tz, 2.1 * s, 2.9 * s, 2.1 * s, Math.random() * 6);
-    put(foliageConeGeo, tx, 6.7 * s, tz, 1.4 * s, 2.5 * s, 1.4 * s, Math.random() * 6);
-  } else {
-    put(foliageBlobGeo, tx, 4.6 * s, tz, 2.1 * s, 1.8 * s, 2.1 * s, Math.random() * 6);
-    for (let k = 0; k < 3; k++) {
-      const a = Math.random() * Math.PI * 2;
-      put(foliageBlobGeo, tx + Math.cos(a) * 1.2 * s, (4.2 + Math.random() * 1.4) * s, tz + Math.sin(a) * 1.2 * s,
-        1.5 * s, 1.3 * s, 1.5 * s, Math.random() * 6);
+  const done = () => {
+    if (++n < 2) return;
+    const base = pixels(ci), al = pixels(ai).data, d0 = base.data;
+    for (let i = 0; i < d0.length; i += 4) d0[i + 3] = al[i];
+    let cover = 0;
+    for (let i = 3; i < d0.length; i += 4) if (d0[i] >= 128) cover++;
+    cover /= d0.length / 4;
+    const mips = [base];
+    let prev = base;
+    for (let S = base.width >> 1; S >= 1; S >>= 1) {
+      const out = new ImageData(S, S), d = out.data, p = prev.data, P = prev.width;
+      const hist = new Uint32Array(256);
+      for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+          let r = 0, g = 0, b = 0, a = 0, r0 = 0, g0 = 0, b0 = 0;
+          for (let k = 0; k < 4; k++) {
+            const i = ((y * 2 + (k >> 1)) * P + x * 2 + (k & 1)) * 4, w = p[i + 3];
+            r += p[i] * w; g += p[i + 1] * w; b += p[i + 2] * w; a += w;
+            r0 += p[i]; g0 += p[i + 1]; b0 += p[i + 2];
+          }
+          const o = (y * S + x) * 4;
+          // 颜色按透明度加权平均（全透明的地方取普通平均，保留向外扩散过的颜色）
+          if (a > 0) { d[o] = r / a; d[o + 1] = g / a; d[o + 2] = b / a; } else { d[o] = r0 / 4; d[o + 1] = g0 / 4; d[o + 2] = b0 / 4; }
+          d[o + 3] = a / 4;
+          hist[d[o + 3]]++;
+        }
+      }
+      // 找一个放大倍数，让 alpha ≥ 0.5 的像素占比与原图一致
+      const need = cover * S * S;
+      let cum = 0, aStar = 128;
+      for (let a = 255; a >= 1; a--) { cum += hist[a]; if (cum >= need) { aStar = a; break; } }
+      const k = Math.min(4, Math.max(1, 128 / aStar));
+      if (k > 1.001) for (let i = 3; i < d.length; i += 4) d[i] = Math.min(255, d[i] * k);
+      mips.push(out);
+      prev = out;
     }
+    treeImpTex.image = base;
+    treeImpTex.mipmaps = mips;
+    treeImpTex.generateMipmaps = false;
+    treeImpTex.minFilter = THREE.LinearMipmapLinearFilter;
+    treeImpTex.needsUpdate = true;
+    treeImpMat.visible = true;
+    treeImpReady = true;
+    treeImpMeshes.forEach(m => { m.castShadow = true; });
+    renderer.shadowMap.needsUpdate = true;
+  };
+  ci.onload = done; ai.onload = done;
+  ci.src = TEX_DATA.treeC; ai.src = TEX_DATA.treeA;
+}
+loadTreeImpostors();
+
+// 按 250 米方格合并成少数几个网格（和房子 / 岩石的合批一样，远处整块不画）
+const treeImpBuckets = new Map();
+function addTreeImpostor(tx, gy, tz, type, scale, rot, tint, sink = 0.15) {
+  const key = Math.floor(tx / BATCH_CELL) + "|" + Math.floor(tz / BATCH_CELL);
+  let b = treeImpBuckets.get(key);
+  if (!b) { b = { pos: [], nor: [], uv: [], col: [], idx: [] }; treeImpBuckets.set(key, b); }
+  const c = Math.cos(rot), s = Math.sin(rot);
+  // 两张面片：第一张沿模型的 X 轴，第二张沿 Z 轴（与烘焙时转 0° / 90° 拍的两张图对应）
+  const axes = [[c, -s], [s, c]];
+  for (let k = 0; k < 2; k++) {
+    const v = type.views[k], [ax, az] = axes[k];
+    const hw = v.w * scale / 2, H = v.h * scale, y0 = gy - sink;
+    const base = b.pos.length / 3;
+    const corners = [[-1, 0], [1, 0], [1, 1], [-1, 1]];
+    for (const [sx, sy] of corners) {
+      b.pos.push(tx + ax * hw * sx, y0 + H * sy, tz + az * hw * sx);
+      // 法线大致朝上、略向外张开：正反两面受光一致，整棵树有一点圆润的明暗
+      const nx = ax * sx * 0.35, nz = az * sx * 0.35, ny = 1 + sy * 0.3, nl = Math.hypot(nx, ny, nz);
+      b.nor.push(nx / nl, ny / nl, nz / nl);
+      b.uv.push(sx < 0 ? v.u0 : v.u1, sy ? v.v1 : v.v0);
+      const sh = sy ? 1 : 0.8;
+      b.col.push(tint[0] * sh, tint[1] * sh, tint[2] * sh);
+    }
+    // 正面 + 反面（反面三角形绕序相反，共用顶点）
+    b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3, base, base + 2, base + 1, base, base + 3, base + 2);
   }
+}
+function flushTreeImpostors() {
+  treeImpBuckets.forEach(b => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(b.pos, 3));
+    g.setAttribute("normal", new THREE.Float32BufferAttribute(b.nor, 3));
+    g.setAttribute("uv", new THREE.Float32BufferAttribute(b.uv, 2));
+    g.setAttribute("color", new THREE.Float32BufferAttribute(b.col, 3));
+    g.setIndex(b.idx);
+    g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, treeImpMat);
+    m.customDepthMaterial = treeImpDepthMat;
+    m.castShadow = treeImpReady;
+    m.receiveShadow = true;
+    m.matrixAutoUpdate = false;
+    scene.add(m);
+    treeImpMeshes.push(m);
+    staticBatchMeshes.push(m);
+  });
+  treeImpBuckets.clear();
 }
 
 // 植被摆放点是否合适：不出界、不在河里/路上、不压建筑
@@ -53,19 +154,24 @@ function propBaseY(x, z, r) {
   return Math.min(terrainH(x - r, z - r), terrainH(x + r, z - r), terrainH(x - r, z + r), terrainH(x + r, z + r), terrainH(x, z));
 }
 
-function plantTree(tx, tz) {
+// 树林里冷杉多，零散的树阔叶树多
+function plantTree(tx, tz, forest = false) {
   const gy = propBaseY(tx, tz, 0.5);
+  const type = TREE_TYPES[Math.random() < (forest ? 0.8 : 0.45) ? (Math.random() < 0.5 ? 0 : 1) : 2];
+  const scale = type.s0 + Math.random() * (type.s1 - type.s0);
+  const t = 0.88 + Math.random() * 0.2;
+  addTreeImpostor(tx, gy, tz, type, scale, Math.random() * Math.PI * 2, [t * (0.96 + Math.random() * 0.08), t, t * (0.94 + Math.random() * 0.08)]);
+  // 看不见的树干：挡子弹、挡视线、挡人（和原来一样）
   const tree = new THREE.Group();
   const trunk = new THREE.Mesh(TRUNK_GEO, trunkMat);
   trunk.position.y = 1.8;
+  trunk.scale.set(type.trunkR / 0.45, 1, type.trunkR / 0.45);
   tree.add(trunk);
   tree.position.set(tx, gy, tz);
   tree.updateMatrixWorld(true);
-  addToStaticBatch(trunk, "bark", 0x5c4331, { ao: false, shadeFn: p => 0.75 + 0.25 * Math.min(1, (p.y - gy) / 3) });
-  addTreeFoliageToBatch(tx, tz, gy);
   shootableEnvironment.push(trunk);
   wallMeshesForLOS.push(trunk);
-  addCollider(tx - 0.45, tx + 0.45, tz - 0.45, tz + 0.45, gy, gy + 3.6);
+  addCollider(tx - type.trunkR, tx + type.trunkR, tz - type.trunkR, tz + type.trunkR, gy, gy + 3.6);
 }
 
 // 成片树林（记录位置，用于地图上画出林区）
@@ -74,16 +180,16 @@ for (let f = 0, made = 0; f < 60 && made < 13; f++) {
   const fx = (Math.random() - 0.5) * (MAP_SIZE - 400), fz = (Math.random() - 0.5) * (MAP_SIZE - 400);
   if (POIS.some(p => Math.hypot(p.x - fx, p.z - fz) < p.r + 120)) continue;
   made++;
-  const fr = 70 + Math.random() * 90, n = 30 + Math.floor(Math.random() * 30);
+  const fr = 70 + Math.random() * 90, n = 40 + Math.floor(Math.random() * 36);
   forestPatches.push({ x: fx, z: fz, r: fr });
   for (let i = 0; i < n; i++) {
     const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * fr;
     const tx = fx + Math.cos(a) * rr, tz = fz + Math.sin(a) * rr;
-    if (canPlaceProp(tx, tz, 3)) plantTree(tx, tz);
+    if (canPlaceProp(tx, tz, 3)) plantTree(tx, tz, true);
   }
 }
 // 零散树木
-for (let i = 0; i < 300; i++) {
+for (let i = 0; i < 380; i++) {
   const tx = (Math.random() - 0.5) * (MAP_SIZE - 120), tz = (Math.random() - 0.5) * (MAP_SIZE - 120);
   if (canPlaceProp(tx, tz, 3)) plantTree(tx, tz);
 }
@@ -125,16 +231,10 @@ for (let i = 0; i < 760; i++) {
   const bx = (Math.random() - 0.5) * (MAP_SIZE - 80);
   const bz = (Math.random() - 0.5) * (MAP_SIZE - 80);
   if (!canPlaceProp(bx, bz, 1.5)) continue;
-  const col = FOLIAGE_COLORS[Math.floor(Math.random() * FOLIAGE_COLORS.length)];
-  const s = 0.6 + Math.random() * 0.7;
-  const gy = propBaseY(bx, bz, 0.6 * s);
-  for (let k = 0; k < 2; k++) {
-    _foliageTmp.geometry = foliageBlobGeo;
-    _foliageTmp.position.set(bx + (k - 0.5) * 0.7 * s, gy + 0.35 * s, bz + (Math.random() - 0.5) * 0.6 * s);
-    _foliageTmp.scale.set(0.9 * s, 0.65 * s, 0.9 * s);
-    _foliageTmp.rotation.set(0, Math.random() * 6, 0);
-    addToStaticBatch(_foliageTmp, "leaf", col, { ao: false, shadeFn: p => 0.6 + 0.4 * Math.min(1, (p.y - gy) / (0.9 * s)) });
-  }
+  const s = 0.55 + Math.random() * 0.4;
+  const gy = propBaseY(bx, bz, 0.8 * s);
+  const t = 0.85 + Math.random() * 0.2;
+  addTreeImpostor(bx, gy, bz, BUSH_TYPE, s, Math.random() * Math.PI * 2, [t, t * (0.98 + Math.random() * 0.06), t * 0.95], 0.3 * s);
 }
 
 // 地形定型（房子底下都压平了）→ 生成地形网格与贴着地形的路面
@@ -142,4 +242,5 @@ buildTerrainMesh();
 buildRoadRibbons();
 // 全部静态物体生成完毕 → 一次性合批上传 GPU
 flushStaticBatches();
+flushTreeImpostors();
 syncColliderGrid();

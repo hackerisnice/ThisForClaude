@@ -64,8 +64,9 @@ function spawnAirdropEvent() {
   // 落点避开房顶和河面（落在楼顶上谁都拿不到）
   let dropX = 0, dropZ = 0;
   for (let tries = 0; tries < 20; tries++) {
-    dropX = zoneState.cx + (Math.random() - 0.5) * zoneState.targetR * 1.1;
-    dropZ = zoneState.cz + (Math.random() - 0.5) * zoneState.targetR * 1.1;
+    const span = Math.min(zoneState.targetR, 1400) * 1.1; // 还没刷圈时在地图中间一大片随机
+    dropX = zoneState.cx + (Math.random() - 0.5) * span;
+    dropZ = zoneState.cz + (Math.random() - 0.5) * span;
     dropX = Math.max(-MAP_LIMIT + 30, Math.min(MAP_LIMIT - 30, dropX));
     dropZ = Math.max(-MAP_LIMIT + 30, Math.min(MAP_LIMIT - 30, dropZ));
     if (!getBuildingContainingPoint(dropX, dropZ, 4) && Math.abs(dropZ - RIVER_Z) > RIVER_HALF + 6 && !isPointBlocked2D(dropX, dropZ, 2.5, terrainH(dropX, dropZ)) &&

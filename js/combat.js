@@ -121,7 +121,7 @@ function fireCurrentWeapon() {
 
   const wep = player.weapons[player.activeSlot];
   if (!wep) {
-    sfx.playShot(true, 2.0, 0);
+    sfx.playPunch();
     fpGunGroup.position.z = -0.3;
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
     raycaster.far = 2.6;
@@ -152,7 +152,7 @@ function fireCurrentWeapon() {
 
   wep.ammoInMag--;
   player.consecutiveShots++;
-  sfx.playShot(st.isSupp, base.dmg ? base.dmg / 42 : 1.5, 0);
+  sfx.playShot(st.isSupp, base.dmg ? base.dmg / 42 : 1.5, 0, 0, wep.id);
 
   player.lastFiredAt = now;
   player.lastFiredSupp = st.isSupp;
@@ -196,7 +196,7 @@ function fireCurrentWeapon() {
       player.reopenADSAfterBolt = true;
       updateScopeState();
     }
-    sfx.playBoltAction();
+    sfx.playBoltCycle(wep.id);
 
     setTimeout(() => {
       if (player.reopenADSAfterBolt && player.phase === "ground") {

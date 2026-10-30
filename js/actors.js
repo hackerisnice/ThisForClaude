@@ -256,6 +256,7 @@ function createAIBot(id) {
     adsBlend: 0,
     aimPitch: 0,
     foeUntil: 0, foeY: 0, foeDist: 30,
+    playerThreatT: -1e9, playerFocusUntil: 0, // 最近一次被玩家打中 / 擦过的时刻；刚和玩家交过火（这段时间不去招惹别的 AI）
     // 枪法（像真人一样瞄准，没有命中率数值，见 botaim.js）：每个 AI 的反应、手速、手抖、压枪水平不一样
     ...rollBotAimTraits(),
     aimOn: false, aimLostAt: -1e9, reactUntil: 0,

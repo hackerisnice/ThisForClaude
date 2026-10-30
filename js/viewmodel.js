@@ -98,7 +98,18 @@ function rebuildFPGunModel() {
     gr.position.set(0, -0.09, -0.3);
     fpGunGroup.add(gr);
   }
-  if (activeWep.attachments.scope) {
+  const sc = activeWep.attachments.scope;
+  if (sc === "reddot" || sc === "holo") {
+    // 红点 / 全息：方形镜框 + 透明镜片（不是圆筒）
+    const fw = sc === "holo" ? 0.06 : 0.048, fh = sc === "holo" ? 0.05 : 0.044, bar = 0.006, z = -0.03;
+    add(new THREE.BoxGeometry(0.036, 0.022, 0.06), matDark, 0, 0.076, z);
+    add(new THREE.BoxGeometry(fw, bar, 0.018), matDark, 0, 0.09 + fh, z);
+    add(new THREE.BoxGeometry(fw, bar, 0.018), matDark, 0, 0.09, z);
+    add(new THREE.BoxGeometry(bar, fh, 0.018), matDark, -fw / 2, 0.09 + fh / 2, z);
+    add(new THREE.BoxGeometry(bar, fh, 0.018), matDark, fw / 2, 0.09 + fh / 2, z);
+    add(new THREE.PlaneGeometry(fw - bar, fh - bar),
+      new THREE.MeshBasicMaterial({ color: 0x9fd0e6, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }), 0, 0.09 + fh / 2, z);
+  } else if (sc) {
     const big = ["3x", "4x", "6x", "8x"].includes(activeWep.attachments.scope);
     add(new THREE.CylinderGeometry(big ? 0.03 : 0.024, big ? 0.03 : 0.024, big ? 0.22 : 0.12, 14), matDark, 0, 0.105, -0.03, Math.PI / 2);
     add(new THREE.BoxGeometry(0.03, 0.03, 0.05), matDark, 0, 0.08, -0.03);

@@ -260,7 +260,7 @@ function stereoPanFor(x, z) {
 
 // 脚下材质：楼内木地板、屋顶/桥面/遗迹石头、柏油路、土路、草地
 function surfaceTypeAt(x, z, feetY) {
-  if (feetY > 0.1) {
+  if (feetY - terrainH(x, z) > 0.1) {
     const b = getBuildingContainingPoint(x, z, 0);
     if (b && b.kind !== "ruin" && (b.roofY === null || feetY < b.roofY - 0.3)) return "wood";
     return "stone";

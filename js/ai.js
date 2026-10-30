@@ -73,7 +73,7 @@ function removeLootEntry(entry) {
 function botAttachmentTargetSlot(bot, item) {
   for (let i = 0; i < 2; i++) {
     const w = bot.weapons[i];
-    if (w && WEAPONS_DATA[w].slots.includes(item.slot) && !bot.weaponAtts[i][item.slot]) return i;
+    if (w && attachmentFitsWeapon(w, item.id) && !bot.weaponAtts[i][item.slot]) return i;
   }
   return -1;
 }
@@ -454,7 +454,7 @@ function botStartAmbush(bot, now, inB, camp = false) {
 
 // 架点：楼顶层朝向圈中心那一面的窗口（窗外 40 米视野要开阔）
 function botWindowSpots(b, f) {
-  const y = floorY(f), out = [];
+  const y = (b.baseY || 0) + floorY(f), out = [];
   const ns = (b.w >= 13 ? [b.cx] : []).concat(b.w >= 12 ? [b.cx - b.w * 0.3, b.cx + b.w * 0.3] : (b.w >= 9 ? [b.cx - b.w * 0.28, b.cx + b.w * 0.28] : []));
   const nWin = Math.max(1, Math.floor((b.d - 2) / 4.2)), ew = [];
   for (let k = 0; k < nWin; k++) ew.push(b.cz - b.d / 2 + b.d * (k + 0.5) / nWin);
@@ -543,7 +543,7 @@ function botUpdateTactic(bot, now, elapsed, distToPlayer, canSeePlayer, isOutsid
       if (!bot.lkp) bot.lkp = { x: 0, y: 0, z: 0, t: 0 };
       bot.lkp.x = playerRig.position.x + (Math.random() - 0.5) * 2 * n;
       bot.lkp.z = playerRig.position.z + (Math.random() - 0.5) * 2 * n;
-      bot.lkp.y = 0; bot.lkp.t = now;
+      bot.lkp.y = terrainH(bot.lkp.x, bot.lkp.z); bot.lkp.t = now;
       botStartHunt(bot, now);
       return;
     }
@@ -589,9 +589,9 @@ function botHuntGoal(bot, now) {
           x = Math.max(inB.cx - inB.w / 2 + 1, Math.min(inB.cx + inB.w / 2 - 1, x));
           z = Math.max(inB.cz - inB.d / 2 + 1, Math.min(inB.cz + inB.d / 2 - 1, z));
         }
-        if (!isPointBlocked2D(x, z, 0.44, inB ? L.y : 0)) break;
+        if (!isPointBlocked2D(x, z, 0.44, inB ? L.y : terrainH(x, z))) break;
       }
-      bot.huntSearchPt = new THREE.Vector3(x, inB ? L.y : 0, z);
+      bot.huntSearchPt = new THREE.Vector3(x, inB ? L.y : terrainH(x, z), z);
     }
     return bot.huntSearchPt;
   }
@@ -601,7 +601,7 @@ function botHuntGoal(bot, now) {
     return new THREE.Vector3(L.x, L.y, L.z);
   }
   // 情报位置有误差：不在楼里的点一律当成地面
-  const ly = getBuildingContainingPoint(L.x, L.z, 0.3) ? L.y : 0;
+  const ly = getBuildingContainingPoint(L.x, L.z, 0.3) ? L.y : terrainH(L.x, L.z);
   if (dL > 30 && bot.aggr > 0.3) {
     // 包抄：从侧面绕过去，越近越收回到正面（每 4 秒重新定一次包抄点，目标固定才好绕路）
     if (!bot.huntFlankPt || now > bot.huntFlankNext) {
@@ -669,7 +669,7 @@ function updateAIBot(bot, dt, now, elapsed) {
       const landedOnHouse = getBuildingContainingPoint(bot.group.position.x, bot.group.position.z, 0.8);
       if (landedOnHouse) {
         const door = Math.random() < 0.5 ? landedOnHouse.southDoor : landedOnHouse.northDoor;
-        bot.group.position.set(door.x, 0, door.z);
+        bot.group.position.set(door.x, terrainH(door.x, door.z), door.z);
       }
       // 落在树干/石头/草垛里时挤到旁边空地（原版会永久卡死在里面原地踏步）
       pushOutOfColliders(bot.group.position, 0.44, bot.group.position.y);
@@ -874,7 +874,7 @@ function updateAIBot(bot, dt, now, elapsed) {
         bot.lootTarget = null;
         bot.nextLootScan = now + 250;
       }
-    } else if (bot.group.position.distanceTo(bot.targetPos) < 4.5) {
+    } else if (Math.hypot(bot.group.position.x - bot.targetPos.x, bot.group.position.z - bot.targetPos.z) < 4.5) {
       // 7. 巡逻漫游：优先挑选安全区内的其它房区门口巡逻
       const safeHouses = buildingFootprints.filter(b => Math.hypot(b.cx - zoneState.cx, b.cz - zoneState.cz) < zoneState.targetR);
       if (safeHouses.length > 0 && Math.random() < 0.65) {

@@ -47,6 +47,8 @@ function applyLookDelta(dx, dy, baseSens, accel = 1) {
   yaw -= dx * sens;
   pitch -= dy * sens;
   pitch = Math.max(-Math.PI / 2.05, Math.min(Math.PI / 2.05, pitch));
+  // 自己往下压过的那部分后坐力不会再回弹（不然压完枪停火后准星会掉下去）
+  if (dy > 0 && player.recoilBack > 0) player.recoilBack = Math.max(0, player.recoilBack - dy * sens);
 }
 
 function touchLookAccel(dx, dy, dtMs) {

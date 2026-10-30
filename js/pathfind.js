@@ -14,7 +14,7 @@ let navSearchesThisFrame = 0;  // 每帧最多算一次，避免卡顿（主循�
 function navCellSize(fy) { return fy < 1 ? NAV_CELL : 0.5; }
 function navFloorAt(x, z, fy) { return Math.abs(getGroundHeight(x, z, fy + 0.35) - fy) < 0.3; }
 
-// 这个格子能不能站人（结果缓存；场景碰撞体变化时整体清空）。fy = 所在楼层的地板高度（地面层为 0）
+// 这个格子能不能站人（结果缓存；场景碰撞体变化时整体清空）。fy = 所在楼层的地板高度（地面层传 0，按地形高度算）
 function navCellFree(ix, iz, fy = 0) {
   if (navCacheColliders !== wallColliders2D.length) { navLevelCaches.clear(); navCacheColliders = wallColliders2D.length; }
   const lv = fy < 1 ? 0 : Math.round(fy * 10);
@@ -26,7 +26,7 @@ function navCellFree(ix, iz, fy = 0) {
     const c = navCellSize(fy), x = ix * c, z = iz * c;
     let free;
     if (fy < 1) {
-      free = Math.abs(x) < MAP_LIMIT - 2 && Math.abs(z) < MAP_LIMIT - 2 && !isPointBlocked2D(x, z, NAV_RADIUS, 0);
+      free = Math.abs(x) < MAP_LIMIT - 2 && Math.abs(z) < MAP_LIMIT - 2 && !isPointBlocked2D(x, z, NAV_RADIUS, terrainH(x, z));
       // 河面只能走桥
       if (free && Math.abs(z - RIVER_Z) < RIVER_HALF + 1 && !BRIDGE_XS.some(bx => Math.abs(x - bx) < 8.5)) free = false;
     } else {
@@ -46,7 +46,7 @@ function navLineClear(ax, az, bx, bz, fy = 0) {
   const d = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(d / (fy < 1 ? 0.4 : 0.25)));
   for (let i = 1; i <= n; i++) {
     const x = ax + (bx - ax) * i / n, z = az + (bz - az) * i / n;
-    if (!navCellFree(Math.round(x / c), Math.round(z / c), fy) || isPointBlocked2D(x, z, 0.46, fy)) return false;
+    if (!navCellFree(Math.round(x / c), Math.round(z / c), fy) || isPointBlocked2D(x, z, 0.46, fy < 1 ? terrainH(x, z) : fy)) return false;
     if (fy >= 1 && !navFloorAt(x, z, fy)) return false;
   }
   return true;
@@ -165,8 +165,10 @@ function botNavSteerPoint(bot, subGoal, finalGoal, speed, dt, allowPlan) {
   const pos = bot.group.position;
   bot.navCooldown = Math.max(0, (bot.navCooldown || 0) - dt);
   // 楼上：只在同一层楼板上规划（去楼梯口 / 去本层的东西）；正在楼梯上、或者要去的点在别的楼层就交给楼梯逻辑
-  const upper = pos.y >= 1;
-  const groundGoal = !upper && (finalGoal.y || 0) < 1 && !navCrossesRiver(pos.z, finalGoal.z);
+  // 楼上 / 地面层按离地高度判断（山坡上也是地面层）
+  const upper = heightAboveTerrain(pos.x, pos.y, pos.z) >= 1;
+  const goalUp = heightAboveTerrain(finalGoal.x, finalGoal.y || 0, finalGoal.z) >= 1;
+  const groundGoal = !upper && !goalUp && !navCrossesRiver(pos.z, finalGoal.z);
   const target = groundGoal ? finalGoal : subGoal;
   let fy = 0;
   if (upper) {
@@ -174,7 +176,7 @@ function botNavSteerPoint(bot, subGoal, finalGoal, speed, dt, allowPlan) {
     fy = getGroundHeight(pos.x, pos.z, pos.y + 0.1);
     if (!b || flightAt(b, pos) >= 0 || Math.abs((target.y || 0) - pos.y) > 0.6) { bot.navPath = null; bot.navTrack = null; return subGoal; }
   }
-  if (!allowPlan || (!upper && (target.y || 0) >= 1)) { bot.navPath = null; bot.navTrack = null; return subGoal; }
+  if (!allowPlan || (!upper && heightAboveTerrain(target.x, target.y || 0, target.z) >= 1)) { bot.navPath = null; bot.navTrack = null; return subGoal; }
   // 目标挪远了：旧路线作废
   if (bot.navPath && Math.hypot(bot.navPathGoal.x - target.x, bot.navPathGoal.z - target.z) > 5) bot.navPath = null;
   // 进度监测（盯着最终目标，而不是来回切换的门口子目标）

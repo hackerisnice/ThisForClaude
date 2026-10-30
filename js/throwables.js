@@ -247,18 +247,25 @@ function explodeStun(p, t, dist, pan, now) {
 function igniteMolotov(p, t, dist, pan, now) {
   sfx.playIgnite(dist, pan);
   const gy = getGroundHeight(p.x, p.z, p.y + 0.2);
-  const zone = { x: p.x, y: gy, z: p.z, r: 4.2, born: now, until: now + 9000, nextTick: now, nextSmoke: now, ownerName: t.ownerName, byPlayer: t.byPlayer, flames: [] };
+  // 烧在地面上（山坡）还是楼板 / 屋顶上：地面上的火顺着坡铺开
+  const onTerrain = gy - terrainH(p.x, p.z) < 0.05;
+  const zone = { x: p.x, y: gy, z: p.z, r: 4.2, onTerrain, born: now, until: now + 9000, nextTick: now, nextSmoke: now, ownerName: t.ownerName, byPlayer: t.byPlayer, flames: [] };
   for (let i = 0; i < 12; i++) {
     const mat = new THREE.SpriteMaterial({ map: softDotTex, color: Math.random() < 0.5 ? 0xff7a1a : 0xffb030, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending });
     const sp = new THREE.Sprite(mat);
     const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * zone.r * 0.9;
-    sp.position.set(p.x + Math.cos(a) * rr, gy + 0.5, p.z + Math.sin(a) * rr);
+    const fx = p.x + Math.cos(a) * rr, fz = p.z + Math.sin(a) * rr;
+    sp.position.set(fx, (onTerrain ? terrainH(fx, fz) : gy) + 0.5, fz);
     sp.userData.base = 1.0 + Math.random() * 1.3;
     sp.userData.phase = Math.random() * 10;
     scene.add(sp);
     zone.flames.push(sp);
   }
   fireZones.push(zone);
+}
+// 火烧得到这个人吗：地上的火看人是不是站在地面上（坡上下几米也算），楼板 / 屋顶上的火看是不是同一层
+function fireReaches(z, x, y, zz) {
+  return z.onTerrain ? y - terrainH(x, zz) < 1.5 : Math.abs(y - z.y) < 1.5;
 }
 function updateFire(dt, now) {
   for (let i = fireZones.length - 1; i >= 0; i--) {
@@ -277,13 +284,13 @@ function updateFire(dt, now) {
     if (now > z.nextTick) {
       z.nextTick = now + 250;
       // 火海伤害：每 0.25 秒 3 点（约 12 点/秒），不受防弹衣减免
-      if (player.phase === "ground" && Math.hypot(playerRig.position.x - z.x, playerRig.position.z - z.z) < z.r && Math.abs(player.feetY - z.y) < 1.5) {
+      if (player.phase === "ground" && Math.hypot(playerRig.position.x - z.x, playerRig.position.z - z.z) < z.r && fireReaches(z, playerRig.position.x, player.feetY, playerRig.position.z)) {
         damagePlayer(3, z.ownerName, "燃烧瓶");
       }
       aiPlayers.forEach(bot => {
         if (!bot.alive || bot.phase !== "ground") return;
         const d = Math.hypot(bot.group.position.x - z.x, bot.group.position.z - z.z);
-        if (Math.abs(bot.group.position.y - z.y) > 1.5) return;
+        if (!fireReaches(z, bot.group.position.x, bot.group.position.y, bot.group.position.z)) return;
         if (d < z.r + 1.5) { bot.fleeX = z.x; bot.fleeZ = z.z; bot.fleeUntil = now + 1200; }
         if (d < z.r) {
           bot.hp -= 3;

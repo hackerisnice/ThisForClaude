@@ -83,12 +83,17 @@ function buildScopeOrIronSightSVG(wep, scopeId) {
       d="M-400,-400 H1200 V850 H-400 Z M${400 - r},225 a${r},${r} 0 1,0 ${2 * r},0 a${r},${r} 0 1,0 ${-2 * r},0 Z"/>`;
 
   if (scopeId === "reddot") {
+    // 方形红点：方框镜架 + 透明镜片（淡淡的镀膜色和一道反光），镜框下面是底座和亮度旋钮
     return `
       ${glowDefs}
       ${railBase}
-      <rect x="342" y="268" width="116" height="82" rx="8" fill="#1c2026" stroke="#0d0f12" stroke-width="2.5"/>
-      <rect x="352" y="276" width="96" height="32" rx="4" fill="#252a32"/>
-      <path d="M350,272 C332,162 468,162 450,272 Z" fill="rgba(160,210,230,0.05)" stroke="#181b20" stroke-width="11" stroke-linejoin="round"/>
+      <rect x="350" y="290" width="100" height="60" rx="5" fill="#1c2026" stroke="#0d0f12" stroke-width="2.5"/>
+      <rect x="452" y="300" width="14" height="22" rx="3" fill="#15181c" stroke="#0d0f12" stroke-width="1.5"/>
+      <path fill-rule="evenodd" fill="#181b20" stroke="#0b0d10" stroke-width="2"
+        d="M328,150 H472 Q480,150 480,158 V292 Q480,300 472,300 H328 Q320,300 320,292 V158 Q320,150 328,150 Z
+           M336,166 H464 V284 H336 Z"/>
+      <rect x="336" y="166" width="128" height="118" fill="rgba(150,205,230,0.07)" stroke="#2b3139" stroke-width="2"/>
+      <path d="M344,176 L372,176 L344,214 Z" fill="rgba(255,255,255,0.05)"/>
       <circle cx="400" cy="225" r="3.2" fill="#ff1e1e" filter="url(#reticle-glow)"/>
     `;
   }

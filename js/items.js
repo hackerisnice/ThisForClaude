@@ -153,8 +153,10 @@ function buildLootPartsGroup(item) {
   return group;
 }
 
-// y = 物资所在表面的高度（地面 0、楼层地板、屋顶等）
-function spawnRandomGroundLoot(x, z, forcedItem = null, y = 0) {
+// y = 物资所在表面的大致高度（楼层地板、屋顶、AI / 玩家脚下……），不给就是地面。
+// 实际落在这一点脚下 0.6 米以内最高的表面上（山坡上的盒子物资不会一半埋进土里或悬在半空）
+function spawnRandomGroundLoot(x, z, forcedItem = null, y = null) {
+  y = getGroundHeight(x, z, (y === null ? terrainH(x, z) : y) + 0.6);
   let item = forcedItem;
   if (!item) {
     const r = Math.random();

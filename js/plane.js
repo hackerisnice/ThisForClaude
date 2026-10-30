@@ -68,7 +68,8 @@ function spawnAirdropEvent() {
     dropZ = zoneState.cz + (Math.random() - 0.5) * zoneState.targetR * 1.1;
     dropX = Math.max(-MAP_LIMIT + 30, Math.min(MAP_LIMIT - 30, dropX));
     dropZ = Math.max(-MAP_LIMIT + 30, Math.min(MAP_LIMIT - 30, dropZ));
-    if (!getBuildingContainingPoint(dropX, dropZ, 4) && Math.abs(dropZ - RIVER_Z) > RIVER_HALF + 6 && !isPointBlocked2D(dropX, dropZ, 2.5, 0)) break;
+    if (!getBuildingContainingPoint(dropX, dropZ, 4) && Math.abs(dropZ - RIVER_Z) > RIVER_HALF + 6 && !isPointBlocked2D(dropX, dropZ, 2.5, terrainH(dropX, dropZ)) &&
+        terrainMaxDeviation(dropX - 4, dropZ - 4, dropX + 4, dropZ + 4, terrainH(dropX, dropZ)) < 1.2) break;
   }
   const landY = getGroundHeight(dropX, dropZ, 1e9);
 

@@ -30,6 +30,24 @@ mapBaseCanvas.width = mapBaseCanvas.height = MAP_BASE_PX;
   nctx.putImageData(img, 0, 0);
   c.imageSmoothingEnabled = true;
   c.drawImage(noise, 0, 0, MAP_BASE_PX, MAP_BASE_PX);
+  // 山丘：按坡向做明暗（西北方向来光，迎光坡亮、背光坡暗），越高越偏土黄，一眼看出哪里有山
+  const HS = 160, hs = document.createElement("canvas");
+  hs.width = hs.height = HS;
+  const hctx = hs.getContext("2d"), himg = hctx.createImageData(HS, HS);
+  for (let y = 0; y < HS; y++) {
+    for (let x = 0; x < HS; x++) {
+      const wx = -H + (x + 0.5) * MAP_SIZE / HS, wz = -H + (y + 0.5) * MAP_SIZE / HS;
+      const h = terrainH(wx, wz);
+      const sl = (terrainH(wx + 10, wz) - terrainH(wx - 10, wz) + terrainH(wx, wz + 10) - terrainH(wx, wz - 10)) * 0.05;
+      const hk = smoothstep(2, 30, h);
+      const o = (y * HS + x) * 4;
+      const lit = sl > 0;
+      himg.data[o] = lit ? 235 : 20 + hk * 40; himg.data[o + 1] = lit ? 225 : 26 + hk * 20; himg.data[o + 2] = lit ? 170 : 12;
+      himg.data[o + 3] = Math.min(150, Math.abs(sl) * 255 + hk * 40);
+    }
+  }
+  hctx.putImageData(himg, 0, 0);
+  c.drawImage(hs, 0, 0, MAP_BASE_PX, MAP_BASE_PX);
   // 林区
   c.fillStyle = "rgba(34, 52, 30, 0.72)";
   forestPatches.forEach(f => { c.beginPath(); c.arc(X(f.x), X(f.z), f.r * k * 1.05, 0, Math.PI * 2); c.fill(); });

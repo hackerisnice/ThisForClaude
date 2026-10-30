@@ -703,7 +703,7 @@ function updateAIBot(bot, dt, now, elapsed) {
     // 交火对象只认一个：正在和别的 AI 对枪就一直盯着它打（对方死了、跑出射程、2.5 秒没看见才算结束）；
     // 这期间玩家没有直接威胁自己（没打中 / 没擦着自己 / 没贴脸）就不分心去打玩家，反过来打玩家时也不去打别的 AI
     const duelFoe = bot.foe && bot.foe.alive && bot.foe.phase === "ground" && now < bot.foeUntil ? bot.foe : null;
-    const playerThreat = now - bot.playerThreatT < 3000 || distToPlayer < 12;
+    const playerThreat = player.phase === "ground" && (now - bot.playerThreatT < 3000 || distToPlayer < 12);
     const focusBot = !!duelFoe && !playerThreat;
     const engagePlayer = isAlerted && canSeePlayer && !!bot.weaponKey && !focusBot;
     if (engagePlayer) { bot.foe = null; bot.foeUntil = 0; bot.playerFocusUntil = now + 5000; }
@@ -1064,7 +1064,9 @@ function updateAIBot(bot, dt, now, elapsed) {
             // AI 互殴：按枪的伤害结算这一轮打中几发，子弹飞到了才扣血（见 ballistics.js）
             const od = otherBot.group.position.distanceTo(bot.group.position);
             const vShots = botVolleySize(bot, prof);
-            scheduleBotHit(bot, otherBot, botVolleyDamageVsBot(bot, otherBot, od, vShots), od);
+            const vDmg = botVolleyDamageVsBot(bot, otherBot, od, vShots);
+            scheduleBotHit(bot, otherBot, vDmg, od);
+            queueBotVisualVolley(bot, otherBot, vShots, vDmg > 0);
             replayBotShot(bot, otherBot.group.position.x, otherBot.group.position.y + 1.2, otherBot.group.position.z, true, vShots);
             botAfterShots(bot, vShots, od, now);
           }

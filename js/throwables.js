@@ -90,7 +90,11 @@ function updateThrowables(dt, now) {
     const t = activeThrows[i];
     const sub = Math.max(1, Math.ceil(t.v.length() * dt / 0.2));
     let impact = false;
+    const ox = t.p.x, oy = t.p.y, oz = t.p.z;
     for (let k = 0; k < sub; k++) impact = throwPhysicsStep(t.p, t.v, dt / sub) || impact;
+    // 飞出窗户：撞碎玻璃
+    const mx = t.p.x - ox, my = t.p.y - oy, mz = t.p.z - oz, ml = Math.hypot(mx, my, mz);
+    if (ml > 0.01) glassSegmentBreak(ox, oy, oz, mx / ml, my / ml, mz / ml, ml);
     t.age += dt;
     t.mesh.position.copy(t.p);
     const spd = t.v.length();

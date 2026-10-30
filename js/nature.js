@@ -243,4 +243,5 @@ buildRoadRibbons();
 // 全部静态物体生成完毕 → 一次性合批上传 GPU
 flushStaticBatches();
 flushTreeImpostors();
+flushGlass();
 syncColliderGrid();

@@ -6,11 +6,16 @@
 // ---------------------------------------------------------------------------
 BRIDGE_XS.forEach(bx => {
   const z0 = RIVER_Z - 30, z1 = RIVER_Z + 30;
-  addSolidBox(bx, 0.2, RIVER_Z, 20, 0.4, 60, 0x7c8084, { collider: false, los: false, ao: false });
+  // 混凝土桥：桥面板 + 沥青路面 + 两侧人行道 + 带压顶的护栏 + 桥墩
+  addSolidBox(bx, 0.05, RIVER_Z, 20, 0.7, 60, 0xa8a59e, { key: "concrete", collider: false, los: false, ao: false });
   addWalkRect(bx - 10, z0, bx + 10, z1, 0.4);
-  addSolidBox(bx - 9.7, 1.0, RIVER_Z, 0.5, 1.2, 60, 0x6e7276, { aoBase: 0.4 });
-  addSolidBox(bx + 9.7, 1.0, RIVER_Z, 0.5, 1.2, 60, 0x6e7276, { aoBase: 0.4 });
-  [-14, 0, 14].forEach(dz => addVisualBox(bx, -1.2, RIVER_Z + dz, 14, 2.6, 2.2, 0x6a6e70, "rock", { ao: false }));
+  addVisualBox(bx, 0.41, RIVER_Z, 15.6, 0.02, 60, 0x55575a, "concrete", { ao: false });
+  for (const s of [-1, 1]) {
+    addVisualBox(bx + s * 8.5, 0.43, RIVER_Z, 2.0, 0.06, 60, 0xb4b1aa, "concrete", { ao: false });
+    addSolidBox(bx + s * 9.7, 1.0, RIVER_Z, 0.4, 1.2, 60, 0xb0ada6, { key: "concrete", aoBase: 0.4 });
+    addVisualBox(bx + s * 9.7, 1.64, RIVER_Z, 0.55, 0.08, 60.2, 0xc8c4bc, "concrete", { ao: false });
+  }
+  [-14, 0, 14].forEach(dz => addVisualBox(bx, -1.4, RIVER_Z + dz, 14, 2.4, 2.2, 0x9c9992, "concrete", { ao: false }));
   reserveRect(bx - 11, z0, bx + 11, z1);
 });
 

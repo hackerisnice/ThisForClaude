@@ -183,6 +183,7 @@ function doorStatesAt(t0) {
 function applyReplayDoors(clip, t) {
   if (!clip.doorInit) return;
   if (doorMesh) refreshDoorSlots(false); // 回放镜头可能在别处，画它附近的门
+  refreshGlassSlots();
   const st = clip.doorWork || (clip.doorWork = new Uint8Array(clip.doorInit.length));
   st.set(clip.doorInit);
   clip.events.forEach(e => { if (e.type === "door" && e.t <= t) st[e.id] = e.open ? 1 : 0; });

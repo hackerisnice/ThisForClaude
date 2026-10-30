@@ -56,6 +56,9 @@ function jumpOrVault() {
   const plan = planVault();
   if (plan) {
     player.vault = { t: 0, dur: plan.dur, pts: plan.pts, climb: plan.climb };
+    // 翻窗：撞碎窗玻璃
+    const p0 = plan.pts[0], p2 = plan.pts[2], vx = p2[0] - p0[0], vz = p2[2] - p0[2], vl = Math.hypot(vx, vz) || 1;
+    for (const hy of [0.5, 1.1, 1.7]) glassSegmentBreak(p0[0], plan.pts[1][1] + hy - 0.15, p0[2], vx / vl, 0, vz / vl, vl);
     if (player.isADS) { player.isADS = false; player.reopenADSAfterBolt = false; updateScopeState(); }
     if (player.casting && player.casting.title.includes("💊")) cancelCastProgress();
     player.stance = "stand";

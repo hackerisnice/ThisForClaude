@@ -283,6 +283,10 @@ function terrainFlatMask(x, z) {
       if (dr < RUINS_PLATEAU_R) H[k] = RUINS_HILL_H;
       else if (dr < RUINS_PLATEAU_R + 20) H[k] += (RUINS_HILL_H - H[k]) * (1 - smoothstep(RUINS_PLATEAU_R, RUINS_PLATEAU_R + 20, dr));
       if (H[k] < 0) H[k] = 0;
+      // 河道：从岸边往河中间挖下去（一直延伸到地图外的地平线）
+      const dzr = Math.abs(z - RIVER_Z);
+      if (dzr < RIVER_HALF) H[k] = riverBedAt(z);
+      if (dzr < RIVER_HALF + 8) fixed[k] = 1;
     }
   }
 
@@ -290,11 +294,38 @@ function terrainFlatMask(x, z) {
   for (let j = 0; j < TER_V; j++) {
     for (let i = 0; i < TER_V; i++) {
       const k = j * TER_V + i, x = i * TER_CELL - TER_HALF, z = j * TER_CELL - TER_HALF;
-      if (Math.max(Math.abs(x), Math.abs(z)) > edgeStart - 40 || terrainFlatMask(x, z) > 0.999 ||
+      if (Math.max(Math.abs(x), Math.abs(z)) > edgeStart - 40 || terrainFlatMask(x, z) > 0.999 || Math.abs(z - RIVER_Z) < RIVER_HALF + 8 ||
           Math.hypot(x - ruins.x, z - ruins.z) < RUINS_PLATEAU_R + 20) fixed[k] = 1;
     }
   }
   terrainRelaxSlopes();
+})();
+
+// 河面网格：横向的分段和地形格子对齐（地形在两行格点之间是线性的，水深按顶点插值就和真实水深一致）
+(function buildRiverWater() {
+  const j0 = Math.floor((RIVER_Z - RIVER_HALF - 8 + TER_HALF) / TER_CELL), j1 = Math.ceil((RIVER_Z + RIVER_HALF + 8 + TER_HALF) / TER_CELL);
+  const XS = 50, nx = TERRAIN_SIZE / XS;
+  const pos = [], dep = [], idx = [];
+  for (let j = j0; j <= j1; j++) {
+    const z = j * TER_CELL - TER_HALF, d = WATER_Y - terrainHeights[j * TER_V + Math.floor(TER_N / 2)];
+    for (let i = 0; i <= nx; i++) { pos.push(i * XS - TER_HALF, WATER_Y, z); dep.push(d); }
+  }
+  const row = nx + 1;
+  for (let j = 0; j < j1 - j0; j++) {
+    for (let i = 0; i < nx; i++) {
+      const a = j * row + i, b = a + 1, c = a + row, e = c + 1;
+      idx.push(a, c, b, b, c, e);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("depth", new THREE.Float32BufferAttribute(dep, 1));
+  g.setIndex(idx);
+  g.computeBoundingSphere();
+  const m = new THREE.Mesh(g, waterMat);
+  m.renderOrder = 2;
+  scene.add(m);
+  freezeObject(m);
 })();
 
 // ---------------------------------------------------------------------------

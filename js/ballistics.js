@@ -114,9 +114,19 @@ function traceBulletSegment(b, a, dir, len) {
     const p = a.clone().addScaledVector(dir, th);
     best = { kind: "env", dist: th, point: p, normal: terrainNormalAt(p.x, p.z, new THREE.Vector3()) };
   }
+  // 打进河里：在水面溅起水花（子弹进水后很快就没劲了）
+  if (dir.y < 0 && a.y > WATER_Y) {
+    const tw = (a.y - WATER_Y) / -dir.y;
+    if (tw <= len && (!best || tw < best.dist) && waterDepthAt(a.z + dir.z * tw, WATER_Y - 0.01) > 0) {
+      const wz = a.z + dir.z * tw;
+      if (WATER_Y - terrainH(a.x + dir.x * tw, wz) > 0) best = { kind: "water", dist: tw, point: a.clone().addScaledVector(dir, tw) };
+    }
+  }
   // 门板（门会动，不进静态网格，单独求交；打在门上不留弹孔）
   const dh = doorsSegmentHit(a.x, a.y, a.z, a.x + dir.x * len, a.y + dir.y * len, a.z + dir.z * len);
   if (dh >= 0 && (!best || dh * len < best.dist)) best = { kind: "door", dist: dh * len, point: a.clone().addScaledVector(dir, dh * len) };
+  // 路上的窗玻璃打碎（不挡子弹）
+  glassSegmentBreak(a.x, a.y, a.z, dir.x, dir.y, dir.z, best ? best.dist : len);
   if (fromPlayer) {
     // 只检测路径附近还活着的 AI
     _bCand.length = 0;
@@ -194,7 +204,7 @@ function playerBulletHitBot(bot, isHead, point, info, dist = 0) {
 
 function finishBullet(b, hit) {
   const end = hit ? hit.point : b.p;
-  const impact = !hit ? 0 : (hit.kind === "env" || hit.kind === "door" ? 2 : 1);
+  const impact = !hit ? 0 : (hit.kind === "env" || hit.kind === "door" || hit.kind === "water" ? 2 : 1);
   // 录像：子弹轨迹（时间记在开枪那一刻，回放里按真实弹速飞）
   replayShotEvent(b.owner === -1 ? -1 : b.owner.id, b.from.x, b.from.y, b.from.z, [end.x, end.y, end.z], [impact], 0, b.born, b.v0, b.wId);
   if (!hit) return;
@@ -206,6 +216,12 @@ function finishBullet(b, hit) {
     }
     // 敌人的子弹打在身边的墙上 / 石头上：跳弹声
     if (b.owner !== -1 && dd < 30) sfx.playRicochet(dd, stereoPanFor(hit.point.x, hit.point.z));
+  } else if (hit.kind === "water") {
+    const dd = hit.point.distanceTo(playerRig.position);
+    if (dd < 220) {
+      spawnFx({ pos: hit.point.clone(), color: 0xe4eef2, s0: 0.15, s1: 0.9, a0: 0.85, a1: 0, life: 0.45, rise: 2.2 });
+      spawnFx({ pos: hit.point.clone(), color: 0xc8d8dc, s0: 0.3, s1: 1.4, a0: 0.45, a1: 0, life: 0.7, rise: 0.2 });
+    }
   } else if (hit.kind === "door") {
     const dd = hit.point.distanceTo(playerRig.position);
     if (dd < 60) sfx.playBounce(dd * 0.6, stereoPanFor(hit.point.x, hit.point.z));

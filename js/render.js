@@ -227,11 +227,14 @@ function makeAsphaltTexture(vertical) {
   return upgradeToPhoto(tex, "asphalt", (ctx, s) => paintRoadLines(ctx, s, vertical));
 }
 
-const waterNormalTex = makeCanvasTexture(128, (ctx, s) => {
-  const h = (x, y) => fbm(x / s * 4, y / s * 4, 71, 4, 4);
+// 水面波纹法线贴图（可无缝平铺；拉长一点，像顺流的水纹）
+const waterNormalTex = makeCanvasTexture(256, (ctx, s) => {
+  const hf = new Float32Array(s * s);
+  for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) hf[y * s + x] = fbm(x / s * 4, y / s * 8, 71, 5, 4) + 0.35 * fbm(x / s * 16, y / s * 16, 73, 3, 16);
+  const h = (x, y) => hf[y * s + x];
   paintPixels(ctx, s, (x, y, o) => {
-    const dx = (h((x + 1) % s, y) - h((x - 1 + s) % s, y)) * 6;
-    const dy = (h(x, (y + 1) % s) - h(x, (y - 1 + s) % s)) * 6;
+    const dx = (h((x + 1) % s, y) - h((x - 1 + s) % s, y)) * 9;
+    const dy = (h(x, (y + 1) % s) - h(x, (y - 1 + s) % s)) * 9;
     const len = Math.hypot(dx, dy, 1);
     o[0] = (-dx / len * 0.5 + 0.5) * 255; o[1] = (-dy / len * 0.5 + 0.5) * 255; o[2] = (1 / len * 0.5 + 0.5) * 255;
   });
@@ -456,6 +459,7 @@ applyQualityTier(gameSettings.quality === "auto" ? defaultAutoTier() : gameSetti
 const BATCH_CELL = 250;
 const BATCH_MAX_VERTS = 65000;     // 每个批次不超过 16 位索引上限，所有手机 GPU 都支持
 const BATCH_VIEW_DIST = 950;       // 超出该距离的批次整体不绘制（远处已被雾气完全吞没）
+const DETAIL_VIEW_DIST = 320;      // 窗框、窗台、落水管这类小细节：只在 320 米内画（再远就不到一个像素了）
 const staticBatchMaterials = {
   plaster: new THREE.MeshLambertMaterial({ vertexColors: true, map: plasterTex }),
   wood:    new THREE.MeshLambertMaterial({ vertexColors: true, map: woodTex }),
@@ -512,7 +516,7 @@ function getBatchBucket(key, matKey, addVerts) {
     sealedBatchBuckets.push(b);
     b = null;
   }
-  if (!b) { b = newBatchBucket(matKey); staticBatchBuckets.set(key, b); }
+  if (!b) { b = newBatchBucket(matKey); b.detail = key.startsWith("d|"); staticBatchBuckets.set(key, b); }
   return b;
 }
 
@@ -530,7 +534,9 @@ function emitBatchVertex(b, p, n, axisX, axisY, axisZ, uvs, useAO, opts) {
     else if (Math.abs(n.y) < 0.5) shade = 0.7 + 0.3 * Math.min(1, Math.max(0, (p.y - (opts.aoBase || 0)) / 2.6));
   }
   if (opts.shadeFn) shade *= opts.shadeFn(p, n);
-  b.col[i * 3] = _bColor.r * shade; b.col[i * 3 + 1] = _bColor.g * shade; b.col[i * 3 + 2] = _bColor.b * shade;
+  // 墙朝屋里的那一面用室内颜色（外墙刷外墙漆，屋里刷浅色墙漆）
+  const c = opts.inColor && n.x * opts.inN[0] + n.z * opts.inN[1] > 0.5 ? opts.inColor : _bColor;
+  b.col[i * 3] = c.r * shade; b.col[i * 3 + 1] = c.g * shade; b.col[i * 3 + 2] = c.b * shade;
   return i;
 }
 
@@ -539,8 +545,10 @@ function addToStaticBatch(mesh, matKey, colorHex, opts = {}) {
   const geo = mesh.geometry;
   const mw = mesh.matrixWorld;
   _bNormalMat.getNormalMatrix(mw);
-  const cx = Math.floor(mw.elements[12] / BATCH_CELL), cz = Math.floor(mw.elements[14] / BATCH_CELL);
-  const key = matKey + "|" + cx + "|" + cz;
+  // 细节件按 2 倍大的格子合批（反正只在附近画，格子大一点绘制次数少）
+  const cell = opts.detail ? BATCH_CELL * 2 : BATCH_CELL;
+  const cx = Math.floor(mw.elements[12] / cell), cz = Math.floor(mw.elements[14] / cell);
+  const key = (opts.detail ? "d|" : "") + matKey + "|" + cx + "|" + cz;
   _bColor.setHex(colorHex);
   const uvs = STATIC_BATCH_UV_SCALE[matKey] || 0.4;
   const useAO = opts.ao !== false;
@@ -607,7 +615,8 @@ function flushStaticBatches() {
     Object.values(g.attributes).forEach(a => a.onUpload(freeUploadedArray));
     g.index.onUpload(freeUploadedArray);
     const m = new THREE.Mesh(g, staticBatchMaterials[b.matKey]);
-    m.castShadow = true;
+    if (b.detail) m.userData.viewDist = DETAIL_VIEW_DIST;
+    m.castShadow = !b.detail; // 窗框窗台这些小东西的影子看不出来，省掉阴影那一遍的绘制
     m.receiveShadow = true;
     m.matrixAutoUpdate = false;
     m.updateMatrix();
@@ -628,7 +637,7 @@ function cullStaticBatches() {
   for (let i = 0; i < staticBatchMeshes.length; i++) {
     const m = staticBatchMeshes[i];
     const s = m.geometry.boundingSphere;
-    m.visible = Math.hypot(s.center.x - px, s.center.z - pz) - s.radius < BATCH_VIEW_DIST;
+    m.visible = Math.hypot(s.center.x - px, s.center.z - pz) - s.radius < (m.userData.viewDist || BATCH_VIEW_DIST);
   }
 }
 

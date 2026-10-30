@@ -159,10 +159,8 @@ function replayBotShot(bot, tx, ty, tz, hit, n = 1) {
     const r = 0.45 + Math.random() * (0.3 + d * 0.012 * (1.6 - bot.adsBlend));
     _rpDir.set(tx + _rpPerp.x * r - m.x, ty + _rpPerp.y * r - m.y, tz + _rpPerp.z * r - m.z).normalize();
     let len = d + 45, impact = 0;
-    if (_rpDir.y < -0.01) {
-      const tg = (m.y - 0.05) / -_rpDir.y; // 打到地上
-      if (tg < len) { len = tg; impact = 2; }
-    }
+    const tg = terrainSegmentHit(m.x, m.y, m.z, _rpDir.x, _rpDir.y, _rpDir.z, len); // 打到地上 / 山坡上
+    if (tg >= 0) { len = tg; impact = 2; }
     ends.push(m.x + _rpDir.x * len, m.y + _rpDir.y * len, m.z + _rpDir.z * len);
     impacts.push(impact);
   }

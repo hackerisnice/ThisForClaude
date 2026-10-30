@@ -218,6 +218,11 @@ function fireCurrentWeapon() {
   pitch += vKick;
   yaw -= hKick;
   pitch = Math.max(-Math.PI / 2.05, Math.min(Math.PI / 2.05, pitch));
+  // 后坐力回弹（端游手感）：枪口上跳的大部分、横向晃动的一半，会在开火间隙和停火后自己回落（见 main.js）
+  player.recoilBack += vKick * 0.72;
+  player.recoilYawBack += hKick * 0.5;
+  // 枪身上扬一下再落回
+  fpGunGroup.rotation.x = Math.min(0.16, fpGunGroup.rotation.x + vKick * 2.2);
 
   updateAllHUD();
 }

@@ -71,6 +71,16 @@ const ATTACHMENTS_DATA = {
   "bullet_loops": { id: "bullet_loops", name: "子弹袋 (-35%装填/拉栓)", slot: "loops", reloadMult: 0.65, weight: 10 }
 };
 
+// 配件能不能装到这把枪上：先看枪有没有这个槽位；8 倍镜只有连狙、狙击枪和 MK47 / M16A4 能装；
+// 撞火枪托只给本来不能全自动的枪（拉栓枪除外）
+function attachmentFitsWeapon(wId, attId) {
+  const w = WEAPONS_DATA[wId], a = ATTACHMENTS_DATA[attId];
+  if (!w || !a || !w.slots.includes(a.slot)) return false;
+  if (attId === "8x") return w.type === "DMR" || w.type === "SR" || wId === "mk47" || wId === "m16a4";
+  if (a.forceAuto) return !w.modes.includes("auto") && !w.isBoltAction;
+  return true;
+}
+
 const MEDS_DATA = {
   "medkit":     { id: "medkit", name: "医疗箱", castTime: 6.0, healTo: 100, boostAdd: 0, weight: 20 },
   "firstaid":   { id: "firstaid", name: "急救包", castTime: 4.5, healTo: 75, boostAdd: 0, weight: 10 },

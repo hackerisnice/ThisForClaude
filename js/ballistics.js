@@ -108,6 +108,12 @@ function traceBulletSegment(b, a, dir, len) {
   let best = null;
   const env = _bRay.intersectObjects(cands, false);
   if (env.length) best = { kind: "env", dist: env[0].distance, point: env[0].point, normal: env[0].face ? env[0].face.normal : _up };
+  // 地面 / 山坡（按地形高度场求交）
+  const th = terrainSegmentHit(a.x, a.y, a.z, dir.x, dir.y, dir.z, best ? best.dist : len);
+  if (th >= 0) {
+    const p = a.clone().addScaledVector(dir, th);
+    best = { kind: "env", dist: th, point: p, normal: terrainNormalAt(p.x, p.z, new THREE.Vector3()) };
+  }
   // 门板（门会动，不进静态网格，单独求交；打在门上不留弹孔）
   const dh = doorsSegmentHit(a.x, a.y, a.z, a.x + dir.x * len, a.y + dir.y * len, a.z + dir.z * len);
   if (dh >= 0 && (!best || dh * len < best.dist)) best = { kind: "door", dist: dh * len, point: a.clone().addScaledVector(dir, dh * len) };

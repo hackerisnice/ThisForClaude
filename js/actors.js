@@ -29,6 +29,7 @@ const player = {
   lastShotTime: 0,
   lastFiredAt: -1e9,      // 最近一次开枪时刻（远处 AI 更容易发现正在开枪的人）
   lastFiredSupp: false,
+  recoilBack: 0, recoilYawBack: 0, // 还没回弹的枪口上跳 / 横向晃动（弧度）
   boltLockedUntil: 0,
   casting: null,
   // 立体移动：脚底高度（站在哪层楼/楼梯/屋顶上）+ 视线高度（随站/蹲/趴平滑过渡）

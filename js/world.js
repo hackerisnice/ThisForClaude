@@ -11,15 +11,8 @@ const STEP_UP = 0.6;          // 能直接迈上去的高度（楼梯、门槛�
 const RIVER_Z = 330, RIVER_HALF = 23;
 const BRIDGE_XS = [-720, 0, 720];
 
-// 原始地面平面保留为子弹射线检测代理（不参与渲染），渲染使用下方带起伏远山的高细节地形
-const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE),
-  new THREE.MeshLambertMaterial({ color: 0x4d5b41 })
-);
-ground.rotation.x = -Math.PI / 2;
-ground.updateMatrixWorld(true);
-
-const shootableEnvironment = [ground];
+// 子弹 / 视线检测用的场景物体（地形不在这里，按高度场单独求交，见 terrain.js）
+const shootableEnvironment = [];
 const wallMeshesForLOS = [];
 const wallColliders2D = [];
 const buildingFootprints = [];
@@ -175,9 +168,9 @@ function surfaceHeight(s, x, z) {
   const t = (z - s.z0) / (s.z1 - s.z0);
   return s.ya + (s.yb - s.ya) * Math.max(0, Math.min(1, t));
 }
-// 脚下不高于 maxY 的最高可站立表面
+// 脚下不高于 maxY 的最高可站立表面（最低就是地形本身：山坡、平地，见 terrain.js）
 function getGroundHeight(x, z, maxY) {
-  let best = 0;
+  let best = terrainH(x, z);
   const arr = walkGrid.get(gridKey(Math.floor(x / WALK_CELL), Math.floor(z / WALK_CELL)));
   if (!arr) return best;
   for (let i = 0; i < arr.length; i++) {
@@ -307,11 +300,12 @@ function sampleRoad(P) {
   return out;
 }
 
-ROAD_DEFS.forEach(def => {
-  const pts = sampleRoad(def.pts);
-  roadPolylines.push({ pts, w: def.w, kind: def.kind });
+// 登记一条路（折线点 pts）：路面网格查询（脚步声、不在路上种树盖房）+ 之后生成路面条带。
+// street：城镇街道的走向（"v" 南北向 / "h" 东西向），公路为 false
+function registerRoad(pts, w, kind, street = false) {
+  roadPolylines.push({ pts, w, kind, street });
   for (let i = 0; i < pts.length - 1; i++) {
-    const s = { ax: pts[i][0], az: pts[i][1], bx: pts[i + 1][0], bz: pts[i + 1][1], hw: def.w / 2, kind: def.kind };
+    const s = { ax: pts[i][0], az: pts[i][1], bx: pts[i + 1][0], bz: pts[i + 1][1], hw: w / 2, kind };
     const x0 = Math.floor((Math.min(s.ax, s.bx) - s.hw) / ROAD_CELL), x1 = Math.floor((Math.max(s.ax, s.bx) + s.hw) / ROAD_CELL);
     const z0 = Math.floor((Math.min(s.az, s.bz) - s.hw) / ROAD_CELL), z1 = Math.floor((Math.max(s.az, s.bz) + s.hw) / ROAD_CELL);
     for (let ix = x0; ix <= x1; ix++) {
@@ -323,7 +317,8 @@ ROAD_DEFS.forEach(def => {
       }
     }
   }
-});
+}
+ROAD_DEFS.forEach(def => registerRoad(sampleRoad(def.pts), def.w, def.kind));
 
 function distToSeg(px, pz, s) {
   const dx = s.bx - s.ax, dz = s.bz - s.az;
@@ -367,39 +362,74 @@ const roadMaterials = {
   dirt: new THREE.MeshLambertMaterial({ map: dirtRoadTex, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })
 };
 
-// 沿曲线生成路面条带（UV 沿道路方向展开，标线跟着弯道走）
+// 沿曲线生成路面条带（UV 沿道路方向展开，标线跟着弯道走）。路面贴着地形起伏：每 3 米一个横截面、
+// 每个横截面左中右三个点都取地形高度再略抬高一点（地形在路面下已经沿路抹平，见 terrain.js）。
+// 所有路按“路面类型 + 所在 1 公里方格”合并成少数几个网格（城镇街道很多条，一条一个网格会多出几十次绘制）
+const ROAD_TILE = 1000;
+const roadBatches = new Map();
+function roadBatch(kind, x, z) {
+  const key = kind + "|" + Math.floor(x / ROAD_TILE) + "|" + Math.floor(z / ROAD_TILE);
+  let b = roadBatches.get(key);
+  if (!b) { b = { kind, pos: [], nor: [], uv: [], idx: [] }; roadBatches.set(key, b); }
+  return b;
+}
 function buildRoadRibbon(poly, yLift) {
-  const pts = poly.pts, hw = poly.w / 2;
-  const pos = [], uv = [], nor = [], idx = [];
-  let dist = 0;
+  const src = poly.pts, hw = poly.w / 2;
+  const pts = [];
+  for (let i = 0; i < src.length - 1; i++) {
+    const n = Math.max(1, Math.ceil(Math.hypot(src[i + 1][0] - src[i][0], src[i + 1][1] - src[i][1]) / 3));
+    for (let k = 0; k < n; k++) pts.push([src[i][0] + (src[i + 1][0] - src[i][0]) * k / n, src[i][1] + (src[i + 1][1] - src[i][1]) * k / n]);
+  }
+  pts.push(src[src.length - 1]);
+  let dist = 0, cur = null, prevBase = -1;
   for (let i = 0; i < pts.length; i++) {
     const prev = pts[Math.max(0, i - 1)], next = pts[Math.min(pts.length - 1, i + 1)];
     let tx = next[0] - prev[0], tz = next[1] - prev[1];
     const tl = Math.hypot(tx, tz) || 1;
     tx /= tl; tz /= tl;
     if (i > 0) dist += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-    const px = -tz, pz = tx;
-    pos.push(pts[i][0] + px * hw, yLift, pts[i][1] + pz * hw, pts[i][0] - px * hw, yLift, pts[i][1] - pz * hw);
-    nor.push(0, 1, 0, 0, 1, 0);
-    const u = dist / poly.w;
-    uv.push(u, 0, u, 1);
-    if (i > 0) {
-      const a = (i - 1) * 2, b = i * 2;
-      idx.push(a, a + 1, b, a + 1, b + 1, b);
+    const px = -tz, pz = tx, u = dist / poly.w;
+    // 跨进另一个方格：在新方格里接着画（把上一个横截面复制一份，条带不断开）
+    const b = roadBatch(poly.kind, pts[i][0], pts[i][1]);
+    const emit = (j, bb) => {
+      const base = bb.pos.length / 3;
+      for (const o of [1, 0, -1]) {
+        const x = pts[j][0] + px * hw * o, z = pts[j][1] + pz * hw * o;
+        bb.pos.push(x, terrainH(x, z) + yLift, z);
+        terrainNormalAt(x, z, _roadN);
+        bb.nor.push(_roadN.x, _roadN.y, _roadN.z);
+      }
+      const uj = j === i ? u : (dist - Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1])) / poly.w;
+      bb.uv.push(uj, 0, uj, 0.5, uj, 1);
+      return base;
+    };
+    if (cur !== b && i > 0) { prevBase = emit(i - 1, b); cur = b; }
+    else if (cur !== b) cur = b;
+    const base = emit(i, b);
+    // 三角形朝上（原来的绕序朝下，从上面看会被背面剔除，路面根本画不出来）
+    if (prevBase >= 0) {
+      for (let c = 0; c < 2; c++) b.idx.push(prevBase + c, base + c, prevBase + c + 1, prevBase + c + 1, base + c, base + c + 1);
     }
+    prevBase = base;
   }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
-  g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
-  g.setIndex(idx);
-  g.computeBoundingSphere();
-  const m = new THREE.Mesh(g, roadMaterials[poly.kind]);
-  m.receiveShadow = true;
-  scene.add(m);
-  freezeObject(m);
 }
-roadPolylines.forEach((poly, i) => buildRoadRibbon(poly, 0.03 + i * 0.004));
+function flushRoadBatches() {
+  roadBatches.forEach(b => {
+    if (!b.idx.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(b.pos, 3));
+    g.setAttribute("normal", new THREE.Float32BufferAttribute(b.nor, 3));
+    g.setAttribute("uv", new THREE.Float32BufferAttribute(b.uv, 2));
+    g.setIndex(b.pos.length / 3 > 65000 ? new THREE.Uint32BufferAttribute(b.idx, 1) : new THREE.Uint16BufferAttribute(b.idx, 1));
+    g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, roadMaterials[b.kind]);
+    m.receiveShadow = true;
+    scene.add(m);
+    freezeObject(m);
+  });
+  roadBatches.clear();
+}
+const _roadN = new THREE.Vector3();
 
 // ---------------------------------------------------------------------------
 // 3.10 地点（POI）：P 城 + 四座村镇 + 学校 + 遗迹（农场在生成时追加）
@@ -417,56 +447,10 @@ const POI_BY_KEY = {};
 POIS.forEach(p => { POI_BY_KEY[p.key] = p; p.buildings = []; });
 
 // ---------------------------------------------------------------------------
-// 3.11 地形（含地图外远山）、河流、桥梁
+// 3.11 河流（地形本身见 terrain.js）
 // ---------------------------------------------------------------------------
 const TERRAIN_EXT = 900;
 const TERRAIN_SIZE = MAP_SIZE + TERRAIN_EXT * 2;
-const TERRAIN_SEG = 125;
-const terrainGeo = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, TERRAIN_SEG, TERRAIN_SEG);
-terrainGeo.rotateX(-Math.PI / 2);
-{
-  const tPos = terrainGeo.attributes.position;
-  const tCol = new Float32Array(tPos.count * 3);
-  const edgeStart = MAP_SIZE / 2 + 30;
-  for (let i = 0; i < tPos.count; i++) {
-    const x = tPos.getX(i), z = tPos.getZ(i);
-    const edge = Math.max(Math.abs(x), Math.abs(z));
-    let h = 0;
-    if (edge > edgeStart) {
-      // 地图边界外隆起远山；沿河流与公路留出山谷，让河与路一直延伸到地平线
-      const valley = Math.min(smoothstep(30, 110, Math.abs(z - RIVER_Z) - RIVER_HALF), smoothstep(8, 80, roadEdgeDistance(x, z, 120)));
-      h = smoothstep(edgeStart, edgeStart + 380, edge) * (35 + fbm(x / 260, z / 260, 7, 4) * 170) * valley;
-    }
-    tPos.setY(i, h);
-    const n = fbm(x / 170, z / 170, 3, 4);
-    const n2 = valueNoise(x / 42, z / 42, 9);
-    const dry = smoothstep(0.58, 0.74, n);
-    const bank = 1 - smoothstep(RIVER_HALF - 4, RIVER_HALF + 6, Math.abs(z - RIVER_Z));
-    const rocky = smoothstep(45, 120, h);
-    let r = 0.96 + (n - 0.5) * 0.3 + (n2 - 0.5) * 0.12 + dry * 0.22;
-    let g = 0.98 + (n - 0.5) * 0.26 + (n2 - 0.5) * 0.1 + dry * 0.05;
-    let bl = 0.95 + (n - 0.5) * 0.2 - dry * 0.08;
-    r += bank * 0.35; g += bank * 0.12; bl += bank * 0.05;
-    // 村镇地面偏土色、遗迹周边偏灰白碎石色
-    POIS.forEach(p => {
-      const k = 1 - smoothstep(p.r * 0.55, p.r * 1.05, Math.hypot(x - p.x, z - p.z));
-      if (k <= 0) return;
-      if (p.key === "ruins") { r += k * 0.32; g += k * 0.2; bl += k * 0.28; }
-      else { r += k * 0.16; g += k * 0.04; bl -= k * 0.02; }
-    });
-    r = r * (1 - rocky) + 1.05 * rocky; g = g * (1 - rocky) + 0.92 * rocky; bl = bl * (1 - rocky) + 1.0 * rocky;
-    tCol[i * 3] = r; tCol[i * 3 + 1] = g; tCol[i * 3 + 2] = bl;
-  }
-  terrainGeo.setAttribute("color", new THREE.Float32BufferAttribute(tCol, 3));
-  terrainGeo.computeVertexNormals();
-}
-grassTex.repeat.set(TERRAIN_SIZE / 7, TERRAIN_SIZE / 7);
-const terrainMesh = new THREE.Mesh(terrainGeo, new THREE.MeshLambertMaterial({ map: grassTex, vertexColors: true }));
-terrainMesh.receiveShadow = true;
-terrainMesh.frustumCulled = false;
-scene.add(terrainMesh);
-freezeObject(terrainMesh);
-
 waterNormalTex.repeat.set(TERRAIN_SIZE / 24, (RIVER_HALF * 2) / 24);
 const riverMesh = new THREE.Mesh(
   new THREE.PlaneGeometry(TERRAIN_SIZE, RIVER_HALF * 2),

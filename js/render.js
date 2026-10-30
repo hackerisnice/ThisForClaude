@@ -320,8 +320,10 @@ function updateSunShadowCenter() {
   // 玩家每移动 6 米才平移一次阴影相机，静止时阴影边缘完全不闪烁
   if (Math.abs(px - shadowCenterX) < 6 && Math.abs(pz - shadowCenterZ) < 6) return;
   shadowCenterX = px; shadowCenterZ = pz;
-  sunLight.target.position.set(px, 0, pz);
-  sunLight.position.set(px + SUN_SHADOW_OFFSET.x, SUN_SHADOW_OFFSET.y, pz + SUN_SHADOW_OFFSET.z);
+  // 阴影盒子跟着脚下地面的高度走（站在山上时阴影范围不会偏到山脚）
+  const gy = terrainH(px, pz);
+  sunLight.target.position.set(px, gy, pz);
+  sunLight.position.set(px + SUN_SHADOW_OFFSET.x, gy + SUN_SHADOW_OFFSET.y, pz + SUN_SHADOW_OFFSET.z);
 }
 
 // ---------------------------------------------------------------------------

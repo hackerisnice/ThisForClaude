@@ -209,6 +209,14 @@ function animate() {
       }
     }
 
+    // 后坐力回弹：连射间隙回落得慢，停火后很快回到原来瞄的位置附近
+    if (player.recoilBack > 1e-5 || Math.abs(player.recoilYawBack) > 1e-5) {
+      const k = 1 - Math.exp(-(now - player.lastFiredAt < 140 ? 4 : 11) * dt);
+      const dp = player.recoilBack * k, dyw = player.recoilYawBack * k;
+      pitch -= dp; yaw += dyw;
+      player.recoilBack -= dp; player.recoilYawBack -= dyw;
+    }
+
     if (now < player.boltLockedUntil) {
       fpGunGroup.rotation.x = 0.28 * Math.sin(((player.boltLockedUntil - now) / 1000) * Math.PI);
     } else {

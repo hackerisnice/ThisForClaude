@@ -134,22 +134,23 @@ function buildSchool(poi) {
   reserveRect(wx0, wz0, wx1, wz1);
 }
 
-// 遗迹：古神庙台基（可登上）+ 石柱阵 + 残垣断壁 + 拱门 + 残破石塔（两层，可上楼）+ 碎石
+// 遗迹：建在一座小山的山顶平台上（见 terrain.js）——古神庙台基（可登上）+ 石柱阵 + 残垣断壁 + 拱门 +
+// 残破石塔（三层，可上楼，远处就能看见）+ 碎石。所有高度都从山顶平台 by 算起
 function buildRuins(poi) {
-  const px = poi.x, pz = poi.z;
+  const px = poi.x, pz = poi.z, by = terrainH(px, pz);
   const stone = () => pickColor([0x9a9384, 0x8c8676, 0xa39c8b, 0x857f70]);
   const sk = "rock";
   // 石铺地面
-  addVisualBox(px, 0.02, pz, 64, 0.04, 56, 0x8f8a7c, sk, { ao: false });
+  addVisualBox(px, by + 0.02, pz, 64, 0.04, 56, 0x8f8a7c, sk, { ao: false });
   // 台基 + 南侧台阶坡道
-  addSolidBox(px, 0.7, pz, 24, 1.4, 18, stone(), { key: sk, aoBase: 0 });
-  addWalkRect(px - 12, pz - 9, px + 12, pz + 9, 1.4);
-  addWalkRampZ(px - 4, px + 4, pz + 9, pz + 13.5, 1.4, 0);
+  addSolidBox(px, by + 0.7, pz, 24, 1.4, 18, stone(), { key: sk, aoBase: by });
+  addWalkRect(px - 12, pz - 9, px + 12, pz + 9, by + 1.4);
+  addWalkRampZ(px - 4, px + 4, pz + 9, pz + 13.5, by + 1.4, by);
   for (let k = 0; k < 6; k++) {
     const top = 1.4 * (6 - k) / 6;
-    addVisualBox(px, top / 2, pz + 9 + 4.5 * (k + 0.5) / 6, 8, top, 4.5 / 6, 0x9a9384, sk, { ao: false, skipBottom: true });
+    addVisualBox(px, by + top / 2, pz + 9 + 4.5 * (k + 0.5) / 6, 8, top, 4.5 / 6, 0x9a9384, sk, { ao: false, skipBottom: true });
   }
-  addSolidBox(px, 0.7, pz + 11.25, 8, 0.2, Math.hypot(4.5, 1.4), 0, { visual: false, los: false, collider: false, rotX: Math.atan2(1.4, 4.5) });
+  addSolidBox(px, by + 0.7, pz + 11.25, 8, 0.2, Math.hypot(4.5, 1.4), 0, { visual: false, los: false, collider: false, rotX: Math.atan2(1.4, 4.5) });
   // 石柱阵（部分断裂）
   const colGeo = new THREE.CylinderGeometry(0.55, 0.62, 1, 10);
   colGeo.userData.shared = true;
@@ -159,12 +160,12 @@ function buildRuins(poi) {
       const x = px - 9 + i * 4.5, z = pz + row * 6;
       const h = Math.random() < 0.35 ? 1.2 + Math.random() * 2.5 : 5.5 + Math.random() * 1.2;
       const m = new THREE.Mesh(colGeo, PROXY_MAT);
-      m.position.set(x, 1.4 + h / 2, z);
+      m.position.set(x, by + 1.4 + h / 2, z);
       m.scale.set(1, h, 1);
-      addToStaticBatch(m, sk, stone(), { aoBase: 1.4 });
+      addToStaticBatch(m, sk, stone(), { aoBase: by + 1.4 });
       shootableEnvironment.push(m);
       wallMeshesForLOS.push(m);
-      addCollider(x - 0.6, x + 0.6, z - 0.6, z + 0.6, 1.4, 1.4 + h);
+      addCollider(x - 0.6, x + 0.6, z - 0.6, z + 0.6, by + 1.4, by + 1.4 + h);
       columnTops.push({ x, z, h, row, i });
     }
   }
@@ -172,18 +173,18 @@ function buildRuins(poi) {
   columnTops.forEach(c => {
     const nb = columnTops.find(o => o.row === c.row && o.i === c.i + 1);
     if (nb && c.h > 5 && nb.h > 5 && Math.random() < 0.7) {
-      const y = 1.4 + Math.min(c.h, nb.h) + 0.35;
+      const y = by + 1.4 + Math.min(c.h, nb.h) + 0.35;
       addSolidBox((c.x + nb.x) / 2, y, c.z, 5.6, 0.7, 1.3, stone(), { key: sk, collider: false, ao: false });
     }
   });
   // 台基北侧残墙
   for (let i = 0; i < 5; i++) {
     const h = 1.5 + Math.random() * 3;
-    addSolidBox(px - 10 + i * 5, 1.4 + h / 2, pz - 8.6, 4.2, h, 0.7, stone(), { key: sk, aoBase: 1.4 });
+    addSolidBox(px - 10 + i * 5, by + 1.4 + h / 2, pz - 8.6, 4.2, h, 0.7, stone(), { key: sk, aoBase: by + 1.4 });
   }
   // 拱门（南面入口）
-  [-1, 1].forEach(s => addSolidBox(px + s * 3.2, 2.6, pz + 27, 1.4, 5.2, 1.4, stone(), { key: sk }));
-  addSolidBox(px, 5.6, pz + 27, 8.2, 1.0, 1.6, stone(), { key: sk, collider: false });
+  [-1, 1].forEach(s => addSolidBox(px + s * 3.2, by + 2.6, pz + 27, 1.4, 5.2, 1.4, stone(), { key: sk, aoBase: by }));
+  addSolidBox(px, by + 5.6, pz + 27, 8.2, 1.0, 1.6, stone(), { key: sk, collider: false });
   // 四周残垣（L 形墙角，高低不一，适合当掩体）
   for (let i = 0; i < 9; i++) {
     const a = (i / 9) * Math.PI * 2 + Math.random() * 0.3;
@@ -192,8 +193,8 @@ function buildRuins(poi) {
     if (Math.abs(x - px) < 5 && z > pz + 9) continue;
     const len1 = 3 + Math.random() * 4, len2 = 2 + Math.random() * 3;
     const h1 = 1.2 + Math.random() * 2.6, h2 = 0.9 + Math.random() * 2;
-    addSolidBox(x, h1 / 2, z, len1, h1, 0.7, stone(), { key: sk, skipBottom: true });
-    addSolidBox(x + len1 / 2 - 0.35, h2 / 2, z + len2 / 2, 0.7, h2, len2, stone(), { key: sk, skipBottom: true });
+    addSolidBox(x, by + h1 / 2, z, len1, h1, 0.7, stone(), { key: sk, skipBottom: true, aoBase: by });
+    addSolidBox(x + len1 / 2 - 0.35, by + h2 / 2, z + len2 / 2, 0.7, h2, len2, stone(), { key: sk, skipBottom: true, aoBase: by });
   }
   // 倒塌的石柱段
   const fallenGeo = new THREE.CylinderGeometry(0.55, 0.55, 3.2, 10);
@@ -203,22 +204,22 @@ function buildRuins(poi) {
     if (Math.abs(x - px) < 14 && Math.abs(z - pz) < 15) continue;
     const m = new THREE.Mesh(fallenGeo, PROXY_MAT);
     const alongX = Math.random() < 0.5;
-    m.position.set(x, 0.55, z);
+    m.position.set(x, by + 0.55, z);
     if (alongX) m.rotation.z = Math.PI / 2; else m.rotation.x = Math.PI / 2;
     addToStaticBatch(m, sk, stone(), { ao: false });
     shootableEnvironment.push(m);
     wallMeshesForLOS.push(m);
-    if (alongX) addCollider(x - 1.6, x + 1.6, z - 0.55, z + 0.55, 0, 1.1);
-    else addCollider(x - 0.55, x + 0.55, z - 1.6, z + 1.6, 0, 1.1);
+    if (alongX) addCollider(x - 1.6, x + 1.6, z - 0.55, z + 0.55, by, by + 1.1);
+    else addCollider(x - 0.55, x + 0.55, z - 1.6, z + 1.6, by, by + 1.1);
   }
-  // 残破石塔（两层、无顶，可上楼俯瞰）
-  buildBuilding({ cx: px + 34, cz: pz - 16, w: 10, d: 10, floors: 2, roof: "none", color: 0x8c8676, key: sk, poi: "ruins", kind: "ruin",
-    furniture: false, trim: false, roofProps: false, lootMul: 1.3, floorColor: 0x7c7668 });
+  // 残破石塔（三层、无顶，可上楼俯瞰整片山下）
+  buildBuilding({ cx: px + 34, cz: pz - 16, w: 10, d: 10, floors: 3, roof: "none", color: 0x8c8676, key: sk, poi: "ruins", kind: "ruin",
+    furniture: false, trim: false, roofProps: false, lootMul: 1.3, floorColor: 0x7c7668, baseY: by });
   // 台基上和周围的物资
-  for (let i = 0; i < 5; i++) spawnRandomGroundLoot(px - 9 + Math.random() * 18, pz - 6 + Math.random() * 12, null, 1.4);
+  for (let i = 0; i < 5; i++) spawnRandomGroundLoot(px - 9 + Math.random() * 18, pz - 6 + Math.random() * 12, null, by + 1.4);
   for (let i = 0; i < 6; i++) {
     const x = px + (Math.random() - 0.5) * 50, z = pz + (Math.random() - 0.5) * 44;
-    if (!isPointBlocked2D(x, z, 0.4, 0) && getGroundHeight(x, z, 0.1) === 0) spawnRandomGroundLoot(x, z, null, 0);
+    if (!isPointBlocked2D(x, z, 0.4, by) && Math.abs(getGroundHeight(x, z, by + 0.1) - by) < 0.01) spawnRandomGroundLoot(x, z, null, by);
   }
   reserveRect(px - 32, pz - 28, px + 40, pz + 30);
 }
@@ -238,14 +239,15 @@ function tryBuildFarm(x, z, idx) {
   buildBuilding(barn);
   for (let i = 0; i < 4; i++) {
     const hx = x + 6 + Math.random() * 28, hz = z + 14 + Math.random() * 8;
-    if (isPointBlocked2D(hx, hz, 1.6, 0)) continue;
+    const gy = terrainH(hx, hz);
+    if (isPointBlocked2D(hx, hz, 1.6, gy)) continue;
     const hay = new THREE.Mesh(HAY_GEO, PROXY_MAT);
     hay.rotation.z = Math.PI / 2;
-    hay.position.set(hx, 0.75, hz);
-    addToStaticBatch(hay, "bark", 0xd4ae4a, { ao: false, shadeFn: p => 0.72 + 0.28 * Math.min(1, p.y / 1.5) });
+    hay.position.set(hx, gy + 0.75, hz);
+    addToStaticBatch(hay, "bark", 0xd4ae4a, { ao: false, shadeFn: p => 0.72 + 0.28 * Math.min(1, (p.y - gy) / 1.5) });
     shootableEnvironment.push(hay);
     wallMeshesForLOS.push(hay);
-    addCollider(hx - 1.1, hx + 1.1, hz - 1.1, hz + 1.1, 0, 1.5);
+    addCollider(hx - 1.1, hx + 1.1, hz - 1.1, hz + 1.1, gy, gy + 1.5);
   }
   return true;
 }
@@ -280,3 +282,23 @@ for (let i = 0, made = 0; i < 300 && made < 36; i++) {
   const spec = makeBuildingSpec(Math.random() < 0.55 ? "house" : (Math.random() < 0.7 ? "house2" : "warehouse"), x, z, null);
   if (buildingFits(spec, 4)) { buildBuilding(spec); made++; }
 }
+
+// 城镇街道：沿房子网格之间的空隙（外圈也有一圈）铺柏油路，一条条直路，碰到房子 / 院墙 / 室外楼梯就断开
+function buildTownStreets(poi, gridR, spacing) {
+  const half = (gridR + 0.5) * spacing, hw = 3.5;
+  const clear = (x, z) => !isRectReserved(x - hw, z - hw, x + hw, z + hw, 0.6) && !isPointBlocked2D(x, z, hw + 0.6, 0);
+  for (let k = -gridR - 1; k <= gridR; k++) {
+    const c = (k + 0.5) * spacing;
+    for (const vertical of [true, false]) {
+      let run = [];
+      const flush = () => { if (run.length >= 4) registerRoad(run, hw * 2, "asphalt", vertical ? "v" : "h"); run = []; };
+      for (let t = -half; t <= half + 0.01; t += 3) {
+        const x = vertical ? poi.x + c : poi.x + t, z = vertical ? poi.z + t : poi.z + c;
+        if (clear(x, z)) run.push([x, z]); else flush();
+      }
+      flush();
+    }
+  }
+}
+buildTownStreets(POI_BY_KEY.pcity, 4, 46);
+["rcity", "ycity", "lcity", "mcity"].forEach(k => buildTownStreets(POI_BY_KEY[k], 2, 46));

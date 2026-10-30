@@ -60,8 +60,9 @@ function gatherLOSCandidates(x0, z0, x1, z1) {
 }
 
 const losRaycaster = new THREE.Raycaster();
-// 任意两点之间是否没有墙体/楼板阻挡（多层楼时楼板也会挡视线）
+// 任意两点之间是否没有墙体/楼板/山坡阻挡（多层楼时楼板也会挡视线）
 function losSegmentClear(ax, ay, az, bx, by, bz) {
+  if (terrainBlocksSegment(ax, ay, az, bx, by, bz)) return false;
   if (losGridCount !== wallMeshesForLOS.length) syncLOSGrid();
   const origin = new THREE.Vector3(ax, ay, az);
   const dir = new THREE.Vector3(bx - ax, by - ay, bz - az);
@@ -97,7 +98,7 @@ function hasLineOfSight(posA, posB, eyeA = 1.5, eyeB = 1.5) {
 // 子弹射线检测空间网格：只测试弹道经过的格子里的物体（结果与全量检测一致；大地图上上万个物体时依然流畅）
 const SHOOT_CELL = 8;
 const shootGrid = new Map();
-let shootGridCount = 1; // 0 号是覆盖全图的地面代理，单独处理
+let shootGridCount = 0;
 let shootStamp = 0;
 const shootCandidates = [];
 function syncShootGrid() {
@@ -121,7 +122,6 @@ function gatherShootCandidates(ray, far, includeAI = true) {
   if (shootGridCount !== shootableEnvironment.length) syncShootGrid();
   shootStamp++;
   shootCandidates.length = 0;
-  shootCandidates.push(shootableEnvironment[0]);
   if (includeAI) for (let i = 0; i < aiHitboxes.length; i++) shootCandidates.push(aiHitboxes[i]);
   const x0 = ray.origin.x, z0 = ray.origin.z;
   const dx = ray.direction.x * far, dz = ray.direction.z * far;

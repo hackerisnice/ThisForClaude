@@ -128,13 +128,12 @@ function pickupLootObject(lootEntry) {
     if (oldWep) {
       // 端游同款换枪：旧枪上的配件自动装到新枪上；新枪装不上的放进背包；背包也满了才随旧枪留在地上
       // （原版会把配件连同旧枪一起丢在地上，看起来就像配件“莫名其妙消失”了）
-      const newSlots = WEAPONS_DATA[it.id].slots;
       const keptOnOld = {}, moved = [], bagged = [];
       Object.keys(oldWep.attachments).forEach(slot => {
         const attId = oldWep.attachments[slot];
         const a = ATTACHMENTS_DATA[attId];
         if (!a) return;
-        if (newSlots.includes(slot) && !newAtts[slot]) {
+        if (attachmentFitsWeapon(it.id, attId) && !newAtts[slot]) {
           newAtts[slot] = attId;
           moved.push(a.name);
         } else if (getUsedBagWeight() + (a.weight || 10) <= player.maxCap) {
@@ -199,7 +198,7 @@ function pickupLootObject(lootEntry) {
     player.medBag[it.id] = (player.medBag[it.id] || 0) + (it.count || 1);
   } else if (it.kind === "attachment") {
     const curWep = player.weapons[player.activeSlot];
-    if (curWep && WEAPONS_DATA[curWep.id].slots.includes(it.slot) && !curWep.attachments[it.slot]) {
+    if (curWep && attachmentFitsWeapon(curWep.id, it.id) && !curWep.attachments[it.slot]) {
       curWep.attachments[it.slot] = it.id;
       rebuildFPGunModel();
       if (player.isADS) updateScopeState();
@@ -255,7 +254,7 @@ function wantsAutoPickup(it) {
   }
   if (it.kind === "attachment") {
     const w = player.weapons[player.activeSlot];
-    return !!w && WEAPONS_DATA[w.id].slots.includes(it.slot) && !w.attachments[it.slot];
+    return !!w && attachmentFitsWeapon(w.id, it.id) && !w.attachments[it.slot];
   }
   if (it.kind === "throwable") {
     return (player.throwBag[it.id] || 0) < (AUTO_THROW_LIMIT[it.id] || 0) && freeW >= THROWABLES_DATA[it.id].weight * (it.count || 1);
@@ -360,8 +359,7 @@ window.equipAttachmentFromBag = function(attIndex, targetWepSlot) {
   const att = player.attBag[attIndex];
   const wep = player.weapons[targetWepSlot];
   if (!att || !wep) return;
-  const wData = WEAPONS_DATA[wep.id];
-  if (!wData.slots.includes(att.slot)) {
+  if (!attachmentFitsWeapon(wep.id, att.id)) {
     showToast(`${wep.name} 不支持安装 ${att.name}`);
     return;
   }
@@ -435,8 +433,8 @@ function renderBackpackModal() {
     row.innerHTML = `
       <span style="color:#00d2ff;">🔧 ${att.name} <small style="color:#888;">(${w})</small></span>
       <div>
-        ${player.weapons[0] ? `<button onclick="equipAttachmentFromBag(${idx}, 0)">装枪1</button>` : ""}
-        ${player.weapons[1] ? `<button onclick="equipAttachmentFromBag(${idx}, 1)">装枪2</button>` : ""}
+        ${player.weapons[0] && attachmentFitsWeapon(player.weapons[0].id, att.id) ? `<button onclick="equipAttachmentFromBag(${idx}, 0)">装枪1</button>` : ""}
+        ${player.weapons[1] && attachmentFitsWeapon(player.weapons[1].id, att.id) ? `<button onclick="equipAttachmentFromBag(${idx}, 1)">装枪2</button>` : ""}
         <button class="btn-drop" onclick="dropAttachmentFromBag(${idx})">丢弃</button>
       </div>`;
     invDiv.appendChild(row);

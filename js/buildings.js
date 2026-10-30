@@ -69,7 +69,9 @@ function isRectBuildable(x0, z0, x1, z1, margin) {
   if (z1 > RIVER_Z - RIVER_HALF - margin - 6 && z0 < RIVER_Z + RIVER_HALF + margin + 6) return false;
   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, hd = Math.hypot(x1 - x0, z1 - z0) / 2;
   if (roadEdgeDistance(cx, cz, hd + margin + 10) < hd + margin) return false;
-  return !isRectReserved(x0, z0, x1, z1, margin);
+  if (isRectReserved(x0, z0, x1, z1, margin)) return false;
+  // 山坡上不盖房（只在平地 / 缓坡上盖，盖的时候把底下压平）
+  return terrainMaxDeviation(x0 - 25, z0 - 25, x1 + 25, z1 + 25, 0) < 2.5;
 }
 
 // 沿 x 方向（位于 z = fixed）或 z 方向（位于 x = fixed）的一段墙，按门窗开口切成若干实心块
@@ -153,20 +155,20 @@ function buildStairFlight(x0, x1, zA, zB, yb, yt, risesSouth) {
   else addCollider(x0, x1, zA, zB - run * frac, yb, yb + blockH);
 }
 // toRoof：平顶楼再加一段从顶层通到屋顶的楼梯（屋顶开口，三面有护栏，出口一面敞开）
-function buildStairCore(ix0, zA, zB, floors, color, toRoof = false) {
+function buildStairCore(ix0, zA, zB, floors, color, toRoof = false, by = 0) {
   const lanes = [[ix0, ix0 + STAIR_LANE_W], [ix0 + STAIR_LANE_W + STAIR_DIV, ix0 + 2 * STAIR_LANE_W + STAIR_DIV]];
   const coreX1 = lanes[1][1];
   const run = zB - zA;
   const H = floors * FLOOR_H;
-  addSolidBox(ix0 + STAIR_LANE_W + STAIR_DIV / 2, H / 2, (zA + zB) / 2, STAIR_DIV, H, run, color, { skipBottom: true });
-  addSolidBox(coreX1 + 0.08, H / 2, (zA + zB) / 2, 0.16, H, run, color, { skipBottom: true });
+  addSolidBox(ix0 + STAIR_LANE_W + STAIR_DIV / 2, by + H / 2, (zA + zB) / 2, STAIR_DIV, H, run, color, { skipBottom: true, aoBase: by });
+  addSolidBox(coreX1 + 0.08, by + H / 2, (zA + zB) / 2, 0.16, H, run, color, { skipBottom: true, aoBase: by });
   const flights = toRoof ? floors : floors - 1;
   for (let f = 0; f < flights; f++) {
     const L = f % 2;
     const [x0, x1] = lanes[L];
     const roof = f === floors - 1;
-    const yt = roof ? H + 0.2 : floorY(f + 1);
-    buildStairFlight(x0, x1, zA, zB, floorY(f), yt, L === 0);
+    const yt = by + (roof ? H + 0.2 : floorY(f + 1));
+    buildStairFlight(x0, x1, zA, zB, by + floorY(f), yt, L === 0);
     // 上一层楼梯井口护栏（在本段楼梯低端那一头，防止从井口掉下去）
     const railZ = L === 0 ? zA : zB;
     addSolidBox((x0 + x1) / 2, yt + 0.5, railZ, x1 - x0, 1.0, 0.1, 0x3a3532, { los: false, aoBase: yt, ao: false });
@@ -224,22 +226,22 @@ function buildExteriorStair(cx, cz, w, d, roofY, sides) {
 // 西墙边一条坡道（与楼梯同坡度）从北往南爬上去，可以从高窗往外打。
 // 返回值与楼梯井同格式，AI 按“两层楼”自动寻路上下
 const CATWALK_DEPTH = 3.0;
-function buildCatwalk(cx, ix0, ix1, iz1) {
+function buildCatwalk(cx, ix0, ix1, iz1, by = 0) {
   const zB = iz1 - CATWALK_DEPTH, zA = zB - STAIR_RUN;
   const lanes = [[ix0, ix0 + STAIR_LANE_W], [ix0 + STAIR_LANE_W + STAIR_DIV, ix0 + 2 * STAIR_LANE_W + STAIR_DIV]];
   const [x0, x1] = lanes[0];
-  const yt = floorY(1);
+  const yt = by + floorY(1);
   const steel = 0x596066;
-  buildStairFlight(x0, x1, zA, zB, floorY(0), yt, true);
+  buildStairFlight(x0, x1, zA, zB, by + floorY(0), yt, true);
   // 坡道东侧挡板（只能从北端走上坡道，不会从侧面钻进坡道下面）
-  addSolidBox(x1 + 0.05, 0.75, (zA + 0.9 + zB) / 2, 0.1, 1.5, zB - zA - 0.9, steel, { los: false, ao: false, skipBottom: true });
+  addSolidBox(x1 + 0.05, by + 0.75, (zA + 0.9 + zB) / 2, 0.1, 1.5, zB - zA - 0.9, steel, { los: false, ao: false, skipBottom: true });
   // 平台板（可站立，下面可以走人）
   addSolidBox(cx, yt - 0.1, (zB + iz1) / 2, ix1 - ix0, 0.2, iz1 - zB, steel, { key: "wood", collider: false, ao: false });
   addWalkRect(ix0, zB, ix1, iz1, yt, yt - 0.2);
   // 平台边缘护栏（坡道口留空）+ 支撑立柱
   addSolidBox((x1 + ix1) / 2, yt + 0.5, zB + 0.04, ix1 - x1, 1.0, 0.08, 0x3a3532, { los: false, ao: false, aoBase: yt });
   for (let px = x1 + 3; px < ix1 - 0.5; px += 5) {
-    addSolidBox(px, (yt - 0.2) / 2, zB + 0.15, 0.2, yt - 0.2, 0.2, steel, { los: false, ao: false, skipBottom: true });
+    addSolidBox(px, (by + yt - 0.2) / 2, zB + 0.15, 0.2, yt - 0.2 - by, 0.2, steel, { los: false, ao: false, skipBottom: true });
   }
   return { lanes, zA, zB, coreX1: x1 + STAIR_DIV, catwalk: true };
 }
@@ -248,9 +250,12 @@ const FACADE_COLORS = [0xc2b29b, 0x9b7653, 0x7a8b99, 0xb86b52, 0x8c857b, 0xd1c7b
 const ROOF_COLORS = [0x4a413b, 0x6b3a2e, 0x3f4448, 0x6a4b3a, 0x52575b];
 const pickColor = arr => arr[Math.floor(Math.random() * arr.length)];
 
-// 通用建筑生成器：多层（每层有窗、底层南北开门）、楼梯井、平顶/双坡顶、室内家具与物资
+// 通用建筑生成器：多层（每层有窗、底层南北开门）、楼梯井、平顶/双坡顶、室内家具与物资。
+// o.baseY：地基高度（默认 0；遗迹山顶上的石塔用山顶高度），盖之前把房子底下的地形压平到这个高度
 function buildBuilding(o) {
   const { cx, cz, w, d } = o;
+  const by = o.baseY || 0;
+  terrainFlattenRect(cx - w / 2, cz - d / 2, cx + w / 2, cz + d / 2, by);
   const floors = o.floors || 1;
   const wallH = o.wallH || FLOOR_H;
   const H = floors === 1 ? wallH : floors * FLOOR_H;
@@ -262,25 +267,25 @@ function buildBuilding(o) {
   const doorW = o.doorW || 2.6, doorH = o.doorH || 2.6;
 
   // 底层地板
-  addSolidBox(cx, 0.08, cz, w, 0.16, d, o.floorColor || 0x6a5442, { key: "wood", collider: false, los: false, ao: false, skipBottom: true });
-  addWalkRect(cx - w / 2, cz - d / 2, cx + w / 2, cz + d / 2, 0.16);
+  addSolidBox(cx, by + 0.08, cz, w, 0.16, d, o.floorColor || 0x6a5442, { key: "wood", collider: false, los: false, ao: false, skipBottom: true });
+  addWalkRect(cx - w / 2, cz - d / 2, cx + w / 2, cz + d / 2, by + 0.16);
 
   // 楼梯井（两层及以上）
   let stairs = null;
   const flatRoof = o.roof !== "gable" && o.roof !== "none";
   if (floors >= 2) {
     const zA = cz - STAIR_RUN / 2, zB = cz + STAIR_RUN / 2;
-    stairs = buildStairCore(ix0, zA, zB, floors, color, flatRoof);
+    stairs = buildStairCore(ix0, zA, zB, floors, color, flatRoof, by);
   } else if (o.catwalk && wallH >= 5.8 && d >= 10.5) {
     // 仓库 / 谷仓 / 体育馆外面看有一排高窗，像有二楼：里面真的加一层平台，能上去
-    stairs = buildCatwalk(cx, ix0, ix1, iz1);
+    stairs = buildCatwalk(cx, ix0, ix1, iz1, by);
   }
   const hasCatwalk = !!(stairs && stairs.catwalk);
   const levels = hasCatwalk ? 2 : floors;
 
   // 楼板（挖掉楼梯井）
   for (let f = 1; f < floors; f++) {
-    const y = f * FLOOR_H;
+    const y = by + f * FLOOR_H;
     const rects = [];
     if (stairs) {
       const [hx0, hx1] = stairs.lanes[(f - 1) % 2];
@@ -300,7 +305,7 @@ function buildBuilding(o) {
   // 外墙：底层南北开门，各层开窗；西墙避开楼梯井不开窗（防止从楼梯上翻出窗外）
   const winOps = (centers, width, bottom, top) => centers.map(c => ({ a: c - width / 2, b: c + width / 2, bottom, top }));
   for (let f = 0; f < floors; f++) {
-    const yBase = f * FLOOR_H;
+    const yBase = by + f * FLOOR_H;
     const h = floors === 1 ? wallH : FLOOR_H;
     const tall = h > 4;
     // 有平台的高大建筑：高窗下沿对准平台上的人眼高度以下，站在平台上能往外看、往外打
@@ -310,7 +315,7 @@ function buildBuilding(o) {
       const ops = [];
       if (f === 0 && o.doors !== false) {
         ops.push({ a: cx - doorW / 2, b: cx + doorW / 2, bottom: 0, top: doorH });
-        if (o.kind !== "ruin") registerDoor(cx, cz + side * d / 2, doorW, doorH, -side); // 向屋里开的双开门
+        if (o.kind !== "ruin" && !by) registerDoor(cx, cz + side * d / 2, doorW, doorH, -side); // 向屋里开的双开门
       }
       else if (w >= 13 && o.windows !== false) ops.push(...winOps([cx], 1.6, wb, wt));
       if (o.windows !== false) ops.push(...winOps(nsCenters, 1.5, wb, wt));
@@ -340,23 +345,23 @@ function buildBuilding(o) {
   // 屋顶
   let roofY = null, ext = null;
   if (o.roof === "gable") {
-    addSolidBox(cx, H, cz, w, 0.2, d, o.floorColor || 0x6a5442, { key: "wood", collider: false, ao: false });
-    buildGableRoof(cx, cz, w, d, H + 0.1, o.roofColor || pickColor(ROOF_COLORS), color);
+    addSolidBox(cx, by + H, cz, w, 0.2, d, o.floorColor || 0x6a5442, { key: "wood", collider: false, ao: false });
+    buildGableRoof(cx, cz, w, d, by + H + 0.1, o.roofColor || pickColor(ROOF_COLORS), color);
   } else if (o.roof !== "none") {
     // 平屋顶 + 女儿墙（可站立；跳伞可以落在楼顶）。多层楼：楼梯通到屋顶，屋顶上开一个楼梯口；
     // 单层房：外墙边有室外楼梯上屋顶，女儿墙在楼梯平台处留口子
     const rc = o.roofColor || 0x4a413b;
-    roofY = H + 0.2;
+    roofY = by + H + 0.2;
     const X0 = cx - w / 2 - 0.3, X1 = cx + w / 2 + 0.3, Z0 = cz - d / 2 - 0.3, Z1 = cz + d / 2 + 0.3;
     const rl = stairs && stairs.roofLane >= 0 ? stairs.lanes[stairs.roofLane] : null;
     const roofRects = rl ? rectMinusHole(X0, Z0, X1, Z1, rl[0], stairs.zA, rl[1], stairs.zB) : [[X0, Z0, X1, Z1]];
     roofRects.forEach(([a, b, c, e]) => {
-      addSolidBox((a + c) / 2, H + 0.05, (b + e) / 2, c - a, 0.3, e - b, rc, { collider: false, ao: false });
-      addWalkRect(a, b, c, e, roofY, H - 0.1);
+      addSolidBox((a + c) / 2, by + H + 0.05, (b + e) / 2, c - a, 0.3, e - b, rc, { collider: false, ao: false });
+      addWalkRect(a, b, c, e, roofY, by + H - 0.1);
     });
     // 有侧门通道连着别的楼的那一侧不放室外楼梯
     const extSides = [1, -1].filter(sd => !(o.sideOpenings || []).some(so => so.side === (sd > 0 ? "east" : "west")));
-    ext = floors === 1 && H <= 4 && o.windows !== false && o.kind !== "ruin" ? buildExteriorStair(cx, cz, w, d, roofY, extSides) : null;
+    ext = floors === 1 && H <= 4 && o.windows !== false && o.kind !== "ruin" && !by ? buildExteriorStair(cx, cz, w, d, roofY, extSides) : null;
     const pc = 0x5a514a;
     addSolidBox(cx, roofY + 0.3, cz - d / 2 - 0.18, w + 0.6, 0.6, 0.25, pc, { ao: false, skipBottom: true });
     addSolidBox(cx, roofY + 0.3, cz + d / 2 + 0.18, w + 0.6, 0.6, 0.25, pc, { ao: false, skipBottom: true });
@@ -380,14 +385,14 @@ function buildBuilding(o) {
   // 室内家具（掩体）与物资，每层分别摆放
   const coreX1 = stairs ? stairs.coreX1 : ix0;
   for (let f = 0; f < levels; f++) {
-    const fy = floorY(f);
+    const fy = by + floorY(f);
     const onCatwalk = f >= floors;
     if (o.furniture !== false && !onCatwalk) placeFurniture(o, ix0, ix1, iz0, iz1, coreX1, stairs, fy, cx);
     if (o.loot !== false) placeFloorLoot(o, ix0, ix1, iz0, iz1, coreX1, stairs, fy, onCatwalk ? w * CATWALK_DEPTH : w * d);
   }
 
   const rec = {
-    cx, cz, w, d, floors: levels, kind: o.kind || "house", poi: o.poi || null, roofY, stairs, extStair: ext,
+    cx, cz, w, d, floors: levels, kind: o.kind || "house", poi: o.poi || null, roofY, stairs, extStair: ext, baseY: by,
     northDoor: { x: cx, z: cz - d / 2 - 2.0 },
     southDoor: { x: cx, z: cz + d / 2 + 2.0 }
   };

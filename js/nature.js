@@ -16,13 +16,13 @@ const TRUNK_GEO = new THREE.CylinderGeometry(0.4, 0.5, 3.6, 7);
 TRUNK_GEO.userData.shared = true;
 const ROCK_GEO = new THREE.DodecahedronGeometry(1.6, 0);
 const _foliageTmp = new THREE.Mesh(foliageConeGeo, leafMat);
-function addTreeFoliageToBatch(tx, tz) {
+function addTreeFoliageToBatch(tx, tz, gy = 0) {
   const col = FOLIAGE_COLORS[Math.floor(Math.random() * FOLIAGE_COLORS.length)];
   const s = 0.85 + Math.random() * 0.4;
-  const shadeFn = p => 0.68 + 0.32 * smoothstep(2.6, 8.5, p.y);
+  const shadeFn = p => 0.68 + 0.32 * smoothstep(2.6, 8.5, p.y - gy);
   const put = (geo, x, y, z, sx, sy, sz, rotY) => {
     _foliageTmp.geometry = geo;
-    _foliageTmp.position.set(x, y, z);
+    _foliageTmp.position.set(x, gy + y, z);
     _foliageTmp.scale.set(sx, sy, sz);
     _foliageTmp.rotation.set(0, rotY, 0);
     addToStaticBatch(_foliageTmp, "leaf", col, { ao: false, shadeFn });
@@ -48,19 +48,24 @@ function canPlaceProp(x, z, clearance) {
   if (roadEdgeDistance(x, z, clearance + 4) < clearance) return false;
   return !isRectReserved(x, z, x, z, clearance + 1);
 }
+// 物体贴地摆放的高度：取占地范围内最低的地形高度（坡上的树根、石头底部埋进土里一点，不会悬空）
+function propBaseY(x, z, r) {
+  return Math.min(terrainH(x - r, z - r), terrainH(x + r, z - r), terrainH(x - r, z + r), terrainH(x + r, z + r), terrainH(x, z));
+}
 
 function plantTree(tx, tz) {
+  const gy = propBaseY(tx, tz, 0.5);
   const tree = new THREE.Group();
   const trunk = new THREE.Mesh(TRUNK_GEO, trunkMat);
   trunk.position.y = 1.8;
   tree.add(trunk);
-  tree.position.set(tx, 0, tz);
+  tree.position.set(tx, gy, tz);
   tree.updateMatrixWorld(true);
-  addToStaticBatch(trunk, "bark", 0x5c4331, { ao: false, shadeFn: p => 0.75 + 0.25 * Math.min(1, p.y / 3) });
-  addTreeFoliageToBatch(tx, tz);
+  addToStaticBatch(trunk, "bark", 0x5c4331, { ao: false, shadeFn: p => 0.75 + 0.25 * Math.min(1, (p.y - gy) / 3) });
+  addTreeFoliageToBatch(tx, tz, gy);
   shootableEnvironment.push(trunk);
   wallMeshesForLOS.push(trunk);
-  addCollider(tx - 0.45, tx + 0.45, tz - 0.45, tz + 0.45, 0, 3.6);
+  addCollider(tx - 0.45, tx + 0.45, tz - 0.45, tz + 0.45, gy, gy + 3.6);
 }
 
 // 成片树林（记录位置，用于地图上画出林区）
@@ -93,21 +98,25 @@ for (let i = 0; i < 300; i++) {
   }
   if (!canPlaceProp(rx, rz, 4)) continue;
   if (Math.random() < 0.68) {
+    const gy = propBaseY(rx, rz, 1.3);
     const rock = new THREE.Mesh(ROCK_GEO, rockMat);
-    rock.position.set(rx, 0.9, rz);
+    rock.position.set(rx, gy + 0.9, rz);
     rock.scale.set(1.2, 0.85, 1.1);
-    addToStaticBatch(rock, "rock", Math.random() < 0.5 ? 0x7a7d7f : 0x6b6e70, { ao: false, shadeFn: p => 0.7 + 0.3 * Math.min(1, p.y / 1.4) });
+    addToStaticBatch(rock, "rock", Math.random() < 0.5 ? 0x7a7d7f : 0x6b6e70, { ao: false, shadeFn: p => 0.7 + 0.3 * Math.min(1, (p.y - gy) / 1.4) });
     shootableEnvironment.push(rock);
     wallMeshesForLOS.push(rock);
-    addCollider(rx - 1.4, rx + 1.4, rz - 1.3, rz + 1.3, 0, 1.8);
+    addCollider(rx - 1.4, rx + 1.4, rz - 1.3, rz + 1.3, gy, gy + 1.8);
   } else {
+    // 草垛只放在平缓的地方（横躺的圆柱放在陡坡上会悬空）
+    const gy = propBaseY(rx, rz, 1.1);
+    if (terrainMaxDeviation(rx - 1.5, rz - 1.5, rx + 1.5, rz + 1.5, gy) > 0.6) continue;
     const hay = new THREE.Mesh(HAY_GEO, PROXY_MAT);
     hay.rotation.z = Math.PI / 2;
-    hay.position.set(rx, 0.75, rz);
-    addToStaticBatch(hay, "bark", 0xd4ae4a, { ao: false, shadeFn: p => 0.72 + 0.28 * Math.min(1, p.y / 1.5) });
+    hay.position.set(rx, gy + 0.75, rz);
+    addToStaticBatch(hay, "bark", 0xd4ae4a, { ao: false, shadeFn: p => 0.72 + 0.28 * Math.min(1, (p.y - gy) / 1.5) });
     shootableEnvironment.push(hay);
     wallMeshesForLOS.push(hay);
-    addCollider(rx - 1.1, rx + 1.1, rz - 1.1, rz + 1.1, 0, 1.5);
+    addCollider(rx - 1.1, rx + 1.1, rz - 1.1, rz + 1.1, gy, gy + 1.5);
   }
 }
 
@@ -118,15 +127,19 @@ for (let i = 0; i < 760; i++) {
   if (!canPlaceProp(bx, bz, 1.5)) continue;
   const col = FOLIAGE_COLORS[Math.floor(Math.random() * FOLIAGE_COLORS.length)];
   const s = 0.6 + Math.random() * 0.7;
+  const gy = propBaseY(bx, bz, 0.6 * s);
   for (let k = 0; k < 2; k++) {
     _foliageTmp.geometry = foliageBlobGeo;
-    _foliageTmp.position.set(bx + (k - 0.5) * 0.7 * s, 0.35 * s, bz + (Math.random() - 0.5) * 0.6 * s);
+    _foliageTmp.position.set(bx + (k - 0.5) * 0.7 * s, gy + 0.35 * s, bz + (Math.random() - 0.5) * 0.6 * s);
     _foliageTmp.scale.set(0.9 * s, 0.65 * s, 0.9 * s);
     _foliageTmp.rotation.set(0, Math.random() * 6, 0);
-    addToStaticBatch(_foliageTmp, "leaf", col, { ao: false, shadeFn: p => 0.6 + 0.4 * Math.min(1, p.y / (0.9 * s)) });
+    addToStaticBatch(_foliageTmp, "leaf", col, { ao: false, shadeFn: p => 0.6 + 0.4 * Math.min(1, (p.y - gy) / (0.9 * s)) });
   }
 }
 
+// 地形定型（房子底下都压平了）→ 生成地形网格与贴着地形的路面
+buildTerrainMesh();
+buildRoadRibbons();
 // 全部静态物体生成完毕 → 一次性合批上传 GPU
 flushStaticBatches();
 syncColliderGrid();

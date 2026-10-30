@@ -6,16 +6,17 @@
 function navTopFloor(b) {
   return b.floors - 1 + (b.stairs && b.stairs.roofLane >= 0 ? 1 : 0);
 }
+// 楼层号 / 楼层高度都从这栋楼的地基算起（遗迹山顶上的石塔地基不在 0 米）
 function floorOfY(b, y) {
-  return Math.max(0, Math.min(navTopFloor(b), Math.round((y - 0.1) / FLOOR_H)));
+  return Math.max(0, Math.min(navTopFloor(b), Math.round((y - (b.baseY || 0) - 0.1) / FLOOR_H)));
 }
 function stairLowApproach(b, f) {
   const st = b.stairs, L = f % 2, lane = st.lanes[L];
-  return new THREE.Vector3((lane[0] + lane[1]) / 2, floorY(f), L === 0 ? st.zA - 0.8 : st.zB + 0.8);
+  return new THREE.Vector3((lane[0] + lane[1]) / 2, (b.baseY || 0) + floorY(f), L === 0 ? st.zA - 0.8 : st.zB + 0.8);
 }
 function stairHighExit(b, f) {
   const st = b.stairs, L = f % 2, lane = st.lanes[L];
-  return new THREE.Vector3((lane[0] + lane[1]) / 2, floorY(f + 1), L === 0 ? st.zB + 0.8 : st.zA - 0.8);
+  return new THREE.Vector3((lane[0] + lane[1]) / 2, (b.baseY || 0) + floorY(f + 1), L === 0 ? st.zB + 0.8 : st.zA - 0.8);
 }
 // 当前是否站在某段楼梯上（返回段号，否则 -1）
 function flightAt(b, pos) {
@@ -23,7 +24,7 @@ function flightAt(b, pos) {
   if (!st || pos.z < st.zA - 0.02 || pos.z > st.zB + 0.02) return -1;
   for (let L = 0; L < 2; L++) {
     if (pos.x < st.lanes[L][0] - 0.05 || pos.x > st.lanes[L][1] + 0.05) continue;
-    const f = Math.floor((pos.y - 0.05) / FLOOR_H);
+    const f = Math.floor((pos.y - (b.baseY || 0) - 0.05) / FLOOR_H);
     if (f >= 0 && f <= navTopFloor(b) - 1 && f % 2 === L) return f;
   }
   return -1;

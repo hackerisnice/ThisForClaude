@@ -22,7 +22,8 @@ function makeBuildingSpec(type, x, z, poi) {
   if (type === "apartment") return { cx: x, cz: z, w: 15 + r() * 4, d: 12 + r() * 2.5, floors: 3, roof: "flat", poi, kind: "apartment", lootMul: 0.85 };
   if (type === "warehouse") {
     return { cx: x, cz: z, w: 16 + r() * 6, d: 13 + r() * 4, floors: 1, wallH: 6, roof: "flat", poi, kind: "warehouse", catwalk: true,
-      color: pickColor([0x7d8a8f, 0x8a7560, 0x6f7a6a, 0x9a8f7f]), doorW: 4.2, doorH: 4.2, roofProps: false, lootMul: 1.2 };
+      color: pickColor([0x9aa6ab, 0xa89480, 0x8e9a88, 0xb4aa9a]), key: "metal", roofKey: "metal", roofColor: 0x8a8f94,
+      doorW: 4.2, doorH: 4.2, roofProps: false, lootMul: 1.2 };
   }
   return null;
 }
@@ -76,13 +77,13 @@ function buildSchool(poi) {
   const px = poi.x, pz = poi.z;
   const mw = 18, md = 14, gap = 0.4;
   const bz = pz - 26;
-  const wallColor = 0xd9cfb4;
+  const wallColor = 0xf0e4da; // 红砖教学楼
   [-1, 0, 1].forEach(i => {
     // 相邻教学楼之间的连通门（开在南半边，避开贴西墙的楼梯井）
     const so = [];
     if (i > -1) so.push({ side: "west", z: bz + 4.5, width: 2.4, floors: [0, 1] });
     if (i < 1) so.push({ side: "east", z: bz + 4.5, width: 2.4, floors: [0, 1] });
-    buildBuilding({ cx: px + i * (mw + gap), cz: bz, w: mw, d: md, floors: 2, roof: "flat", color: wallColor, roofColor: 0x6b3a2e,
+    buildBuilding({ cx: px + i * (mw + gap), cz: bz, w: mw, d: md, floors: 2, roof: "flat", color: wallColor, key: "brick", roofColor: 0x8a7d70,
       poi: "school", kind: "school", sideOpenings: so, lootMul: 1.2, floorColor: 0x8a7a66 });
   });
   // 体育馆
@@ -139,7 +140,7 @@ function buildSchool(poi) {
 function buildRuins(poi) {
   const px = poi.x, pz = poi.z, by = terrainH(px, pz);
   const stone = () => pickColor([0x9a9384, 0x8c8676, 0xa39c8b, 0x857f70]);
-  const sk = "rock";
+  const sk = "stone";
   // 石铺地面
   addVisualBox(px, by + 0.02, pz, 64, 0.04, 56, 0x8f8a7c, sk, { ao: false });
   // 台基 + 南侧台阶坡道
@@ -230,6 +231,7 @@ function tryBuildFarm(x, z, idx) {
   const house = makeBuildingSpec(Math.random() < 0.5 ? "house2" : "house", x, z, null);
   const barn = makeBuildingSpec("warehouse", x + 22, z + (Math.random() - 0.5) * 8, null);
   barn.w = 13 + Math.random() * 3; barn.d = 11 + Math.random() * 3; barn.wallH = 6.2; // 谷仓加高一点，里面有草料阁楼平台
+  barn.color = pickColor([0x9a4a3c, 0x8c5040, 0xa45a48]); // 红色铁皮谷仓
   if (!buildingFits(house, 6) || !isRectBuildable(barn.cx - barn.w / 2, barn.cz - barn.d / 2, barn.cx + barn.w / 2, barn.cz + barn.d / 2, 4)) return false;
   const key = "farm" + idx;
   const poi = { key, name: "", x: x + 11, z, r: 32, weight: 0.6, buildings: [] };
@@ -262,11 +264,15 @@ buildRuins(POI_BY_KEY.ruins);
 generateTown(POI_BY_KEY.pcity, 4, 46, TOWN_MIX_CITY, 0.8);
 ["rcity", "ycity", "lcity", "mcity"].forEach(k => generateTown(POI_BY_KEY[k], 2, 46, TOWN_MIX_VILLAGE, 0.8));
 
-// 散布在野外的农场
-for (let i = 0, made = 0; i < 160 && made < 24; i++) {
-  const x = (Math.random() - 0.5) * (MAP_SIZE - 260), z = (Math.random() - 0.5) * (MAP_SIZE - 260);
-  if (POIS.some(p => Math.hypot(p.x - x, p.z - z) < p.r + 90)) continue;
-  if (tryBuildFarm(x, z, made)) made++;
+// 散布在野外的农场：先用地形生成时留好的平地（见 terrain.js），不够再随机找
+{
+  let made = 0;
+  TERRAIN_FARM_SITES.forEach(fs => { if (made < 24 && tryBuildFarm(fs.x, fs.z, made)) made++; });
+  for (let i = 0; i < 160 && made < 24; i++) {
+    const x = (Math.random() - 0.5) * (MAP_SIZE - 260), z = (Math.random() - 0.5) * (MAP_SIZE - 260);
+    if (POIS.some(p => Math.hypot(p.x - x, p.z - z) < p.r + 90)) continue;
+    if (tryBuildFarm(x, z, made)) made++;
+  }
 }
 // 路边零散民房
 for (let i = 0, made = 0; i < 300 && made < 36; i++) {
@@ -302,3 +308,6 @@ function buildTownStreets(poi, gridR, spacing) {
 }
 buildTownStreets(POI_BY_KEY.pcity, 4, 46);
 ["rcity", "ycity", "lcity", "mcity"].forEach(k => buildTownStreets(POI_BY_KEY[k], 2, 46));
+
+// 房子地基都压平了：地基边上的坡可能变陡，再限一遍坡度（之后才种树、放石头，见 nature.js）
+terrainRelaxSlopes();

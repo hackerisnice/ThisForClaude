@@ -113,9 +113,7 @@ const mmCtx = mmCanvas.getContext("2d");
 const MINIMAP_SPAN = 380; // 小地图显示范围（米）
 document.getElementById("minimap-box").addEventListener("click", () => toggleBigMap());
 
-// 地图上的公共图层：毒圈、航线、空投、声音雷达、玩家箭头
-function drawMapOverlays(ctx, toX, toZ, scale, W, H, isBig) {
-  // 安全区（白圈）与当前毒圈（蓝圈）
+function drawZoneCircles(ctx, toX, toZ, scale, isBig) {
   ctx.strokeStyle = "#ffffff";
   ctx.lineWidth = isBig ? 2 : 1.4;
   ctx.beginPath();
@@ -126,6 +124,11 @@ function drawMapOverlays(ctx, toX, toZ, scale, W, H, isBig) {
   ctx.beginPath();
   ctx.arc(toX(zoneState.cx), toZ(zoneState.cz), zoneState.curR * scale, 0, Math.PI * 2);
   ctx.stroke();
+}
+// 地图上的公共图层：毒圈、航线、空投、声音雷达、玩家箭头
+function drawMapOverlays(ctx, toX, toZ, scale, W, H, isBig) {
+  // 安全区（白圈）与当前毒圈（蓝圈）；开局还没刷圈时不画
+  if (zoneState.mode !== "none") drawZoneCircles(ctx, toX, toZ, scale, isBig);
 
   // 航线（还在飞机上或空中时显示）
   if (player.phase === "plane" || player.phase === "sky" || player.phase === "chute") {

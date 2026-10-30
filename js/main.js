@@ -265,7 +265,11 @@ function animate() {
 
   // 毒圈平滑缩圈
   const curStageCfg = ZONE_STAGES[zoneState.stageIdx];
-  if (curStageCfg) {
+  if (zoneState.mode === "none") {
+    // 开局 5 分钟不刷圈
+    zoneState.timerSec -= dt;
+    if (zoneState.timerSec <= 0) startFirstZone();
+  } else if (curStageCfg) {
     zoneState.timerSec -= dt;
     if (zoneState.mode === "shrinking") {
       const shrinkSpeed = (zoneState.startR - zoneState.targetR) / curStageCfg.shrinkSec;
@@ -299,9 +303,11 @@ function animate() {
   if (now - lastSecondTick > 1000) {
     lastSecondTick = now;
     const stNum = zoneState.stageIdx + 1;
-    document.getElementById("zone-timer").innerText = zoneState.mode === "waiting"
-      ? `⏳ 阶段${stNum}等待: ${formatMMSS(zoneState.timerSec)}`
-      : `⚡ 阶段${stNum}缩圈: ${formatMMSS(zoneState.timerSec)}`;
+    document.getElementById("zone-timer").innerText = zoneState.mode === "none"
+      ? `🕒 ${formatMMSS(zoneState.timerSec)} 后刷圈`
+      : (zoneState.mode === "waiting"
+        ? `⏳ 阶段${stNum}等待: ${formatMMSS(zoneState.timerSec)}`
+        : `⚡ 阶段${stNum}缩圈: ${formatMMSS(zoneState.timerSec)}`);
 
     if (player.boost > 0 && player.phase === "ground") {
       player.boost = Math.max(0, player.boost - 1.2);

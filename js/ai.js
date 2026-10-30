@@ -383,7 +383,7 @@ function botShotSound(bot, isSupp, d) {
   const x = bot.group.position.x, z = bot.group.position.z;
   const play = () => {
     if (replayState.active) return;
-    sfx.playShot(isSupp, 1.0, d, stereoPanFor(x, z));
+    sfx.playShot(isSupp, 1.0, d, stereoPanFor(x, z), bot.weaponKey);
     registerRadarSound("shot", x, z, isSupp);
   };
   if (d > 60) setTimeout(play, d / 343 * 1000); else play();
@@ -700,6 +700,13 @@ function updateAIBot(bot, dt, now, elapsed) {
     }
     const stunned = now < bot.stunnedUntil;
     const fleeing = now < bot.fleeUntil;
+    // 交火对象只认一个：正在和别的 AI 对枪就一直盯着它打（对方死了、跑出射程、2.5 秒没看见才算结束）；
+    // 这期间玩家没有直接威胁自己（没打中 / 没擦着自己 / 没贴脸）就不分心去打玩家，反过来打玩家时也不去打别的 AI
+    const duelFoe = bot.foe && bot.foe.alive && bot.foe.phase === "ground" && now < bot.foeUntil ? bot.foe : null;
+    const playerThreat = now - bot.playerThreatT < 3000 || distToPlayer < 12;
+    const focusBot = !!duelFoe && !playerThreat;
+    const engagePlayer = isAlerted && canSeePlayer && !!bot.weaponKey && !focusBot;
+    if (engagePlayer) { bot.foe = null; bot.foeUntil = 0; bot.playerFocusUntil = now + 5000; }
     bot.crouchWant = false;
     botUpdateTactic(bot, now, elapsed, distToPlayer, canSeePlayer, isOutsideSafe, isInBlueZone);
 
@@ -745,13 +752,16 @@ function updateAIBot(bot, dt, now, elapsed) {
         );
       }
       moveGoal = bot.zoneGoal;
-    } else if (isAlerted && canSeePlayer && bot.weaponKey) {
-      // 2. 与玩家交火时：执行左右蝴蝶步横移走位 (Strafing)，绝不站桩！
-      moveMode = "combat";
+    } else if (engagePlayer || focusBot) {
+      // 2. 交火时（打玩家，或者和别的 AI 对枪）：围着对手左右蝴蝶步横移走位 (Strafing)，绝不站桩！
+      moveMode = engagePlayer ? "combat" : "duel";
+      const fx = engagePlayer ? playerRig.position.x : duelFoe.group.position.x;
+      const fz = engagePlayer ? playerRig.position.z : duelFoe.group.position.z;
+      const distToFoe = engagePlayer ? distToPlayer : duelFoe.group.position.distanceTo(bot.group.position);
       // 按距离切换最合适的枪（近距离切喷子/冲锋枪，远距离切狙击/连狙）
       if (now > bot.nextWeaponEval) {
         bot.nextWeaponEval = now + 900;
-        botConsiderWeaponSwitch(bot, distToPlayer, now);
+        botConsiderWeaponSwitch(bot, distToFoe, now);
       }
       const wType = WEAPONS_DATA[bot.weaponKey].type;
       const sniper = wType === "SR" || wType === "DMR";
@@ -760,18 +770,18 @@ function updateAIBot(bot, dt, now, elapsed) {
         // 不规则节奏：多数时候反向横移，偶尔急停定点射击，偶尔继续同向长距离拉扯；近距离时左右晃得更快
         // 狙击/连狙远距离时更多原地架枪，喷子/冲锋枪几乎不停步
         const r = Math.random();
-        const pauseP = sniper && distToPlayer > 40 ? 0.55 : (closeGun ? 0.1 : 0.2);
+        const pauseP = sniper && distToFoe > 40 ? 0.55 : (closeGun ? 0.1 : 0.2);
         if (r < pauseP) bot.strafePauseUntil = now + (sniper ? 600 + Math.random() * 900 : 200 + Math.random() * 350);
         else if (r < 0.85) bot.strafeDir = -bot.strafeDir;
-        bot.nextStrafeFlip = now + (distToPlayer < 20 ? 320 + Math.random() * 520 : 600 + Math.random() * 1400);
+        bot.nextStrafeFlip = now + (distToFoe < 20 ? 320 + Math.random() * 520 : 600 + Math.random() * 1400);
       }
       // 按手中武器保持交战距离：喷子/冲锋枪贴脸压近，狙击/连狙拉开距离，步枪中距离
       const prefRange = botProfile(bot).prefRange + bot.rangeBias;
-      let strafeOffset = distToPlayer > 22 ? 1.15 : 1.55;
-      if (distToPlayer > prefRange + 12) strafeOffset = closeGun ? 0.45 : 0.8;
-      else if (distToPlayer < prefRange - 8) strafeOffset = 2.05;
-      const angleToPlayer = Math.atan2(playerRig.position.x - bot.group.position.x, playerRig.position.z - bot.group.position.z);
-      const strafeAngle = angleToPlayer + bot.strafeDir * strafeOffset;
+      let strafeOffset = distToFoe > 22 ? 1.15 : 1.55;
+      if (distToFoe > prefRange + 12) strafeOffset = closeGun ? 0.45 : 0.8;
+      else if (distToFoe < prefRange - 8) strafeOffset = 2.05;
+      const angleToFoe = Math.atan2(fx - bot.group.position.x, fz - bot.group.position.z);
+      const strafeAngle = angleToFoe + bot.strafeDir * strafeOffset;
       moveGoal = new THREE.Vector3(
         bot.group.position.x + Math.sin(strafeAngle) * 12,
         0,
@@ -784,9 +794,9 @@ function updateAIBot(bot, dt, now, elapsed) {
         moveGoal.z = Math.max(fightIn.cz - fightIn.d / 2 + 1.2, Math.min(fightIn.cz + fightIn.d / 2 - 1.2, moveGoal.z));
         moveGoal.y = bot.group.position.y;
       }
-      moveSpd = now < bot.strafePauseUntil ? 0 : (closeGun && distToPlayer > prefRange + 12 ? 5.9 : 5.4);
+      moveSpd = now < bot.strafePauseUntil ? 0 : (closeGun && distToFoe > prefRange + 12 ? 5.9 : 5.4);
       // 狙击 / 连狙远距离对枪：原地架枪不乱跑（窗边站着打，野外蹲下打）
-      if (sniper && distToPlayer > 80) {
+      if (sniper && distToFoe > 80) {
         moveSpd = 0;
         if (!fightIn) bot.crouchWant = true;
       }
@@ -876,7 +886,9 @@ function updateAIBot(bot, dt, now, elapsed) {
       }
     } else if (Math.hypot(bot.group.position.x - bot.targetPos.x, bot.group.position.z - bot.targetPos.z) < 4.5) {
       // 7. 巡逻漫游：优先挑选安全区内的其它房区门口巡逻
-      const safeHouses = buildingFootprints.filter(b => Math.hypot(b.cx - zoneState.cx, b.cz - zoneState.cz) < zoneState.targetR);
+      // 只在附近 500 米内挑（还没刷圈时安全区是整张地图，不会跑到地图另一头去）
+      const bx = bot.group.position.x, bz = bot.group.position.z;
+      const safeHouses = buildingFootprints.filter(b => Math.hypot(b.cx - zoneState.cx, b.cz - zoneState.cz) < zoneState.targetR && Math.hypot(b.cx - bx, b.cz - bz) < 500);
       if (safeHouses.length > 0 && Math.random() < 0.65) {
         const h = safeHouses[Math.floor(Math.random() * safeHouses.length)];
         bot.targetPos.set(h.southDoor.x + (Math.random() - 0.5) * 6, 0, h.southDoor.z + (Math.random() - 0.5) * 6);
@@ -920,7 +932,7 @@ function updateAIBot(bot, dt, now, elapsed) {
     // 交火横移 / 躲雷 / 被闪时目标点跟着人动，不做绕路规划
     bot.lastMoveGoal = moveGoal;
     bot.moveMode = moveMode; bot.moveSpdWanted = moveSpd;
-    const movedDist = steerAndMoveAI(bot, moveGoal, moveSpd * bot.speedMul, dt, moveMode !== "combat" && moveMode !== "flee" && moveMode !== "stunned");
+    const movedDist = steerAndMoveAI(bot, moveGoal, moveSpd * bot.speedMul, dt, moveMode !== "combat" && moveMode !== "duel" && moveMode !== "flee" && moveMode !== "stunned");
     // 绕路也走不到（物资在封闭角落 / 别的楼层够不着）：记下来换个目标，不再原地死磕
     if (bot.navUnreachable) {
       bot.navUnreachable = false;
@@ -955,12 +967,16 @@ function updateAIBot(bot, dt, now, elapsed) {
 
     // 朝向控制：和玩家交火时身体跟着枪口转（枪口像人手一样有反应时间、转速上限、跟枪延迟，见 botaim.js），
     // 一边横移一边射击；平时面向行进方向；停下时左右张望。全部为限速平滑转身，不会一帧甩过去
-    botAimUpdate(bot, isAlerted && canSeePlayer && !!bot.weaponKey && !stunned, dt, now);
+    botAimUpdate(bot, engagePlayer && !stunned, dt, now);
     if (bot.aimOn) {
       bot.group.rotation.set(0, bot.aimYaw, 0);
     } else {
       let faceYaw, turnRate;
-      if (isAlerted && canSeePlayer) {
+      if (focusBot) {
+        // 和别的 AI 对枪：一直对着它（不会打一枪转回去走路再转回来）
+        faceYaw = Math.atan2(duelFoe.group.position.x - bot.group.position.x, duelFoe.group.position.z - bot.group.position.z);
+        turnRate = 6;
+      } else if (isAlerted && canSeePlayer) {
         faceYaw = Math.atan2(playerRig.position.x - bot.group.position.x, playerRig.position.z - bot.group.position.z);
         turnRate = 6;
       } else if (now < bot.faceHintUntil) {
@@ -1009,7 +1025,8 @@ function updateAIBot(bot, dt, now, elapsed) {
       if (!bot.aimOn && now - bot.lastFireTime > fireCooldown) {
         const engageRange = isAlerted ? fullRange : fullRange * ((wType === "SR" || wType === "DMR") ? 0.9 : 0.58);
 
-        if (botConsiderThrow(bot, now, distToPlayer, canSeePlayer, isAlerted)) {
+        // 正在和别的 AI 对枪：不往玩家那边丢雷
+        if (!focusBot && botConsiderThrow(bot, now, distToPlayer, canSeePlayer, isAlerted)) {
           bot.lastFireTime = now;
         } else if (player.phase === "ground" && distToPlayer < fullRange && canSeePlayer && !isAlerted && distToPlayer > 60) {
           // 远处发现了人：进入交火状态（先反应、转枪口、开好镜再打）
@@ -1020,12 +1037,22 @@ function updateAIBot(bot, dt, now, elapsed) {
           bot.lastFireTime = now;
           if (Math.random() < 0.42) bot.alertUntil = Math.max(bot.alertUntil, now + 6000);
         } else {
-          const otherBot = aiPlayers.find(o =>
-            o !== bot && o.alive && o.phase === "ground" &&
-            o.group.position.distanceTo(bot.group.position) < Math.min(68, prof.maxRange) &&
-            hasLineOfSight(bot.group.position, o.group.position)
-          );
-          if (otherBot && Math.random() < 0.32) {
+          // 和别的 AI 对枪：已经有对手就只打它（看不见就等，不换人）；刚和玩家交过火的不去招惹别人；
+          // 没有对手时挑最近的一个看得见的
+          const fightR = Math.min(68, prof.maxRange);
+          let otherBot = null;
+          if (duelFoe) {
+            if (duelFoe.group.position.distanceTo(bot.group.position) < fightR && hasLineOfSight(bot.group.position, duelFoe.group.position)) otherBot = duelFoe;
+          } else if (now > bot.playerFocusUntil) {
+            let bestD = fightR;
+            for (let i = 0; i < aiPlayers.length; i++) {
+              const o = aiPlayers[i];
+              if (o === bot || !o.alive || o.phase !== "ground") continue;
+              const d = o.group.position.distanceTo(bot.group.position);
+              if (d < bestD && hasLineOfSight(bot.group.position, o.group.position)) { bestD = d; otherBot = o; }
+            }
+          }
+          if (otherBot && (otherBot === duelFoe || Math.random() < 0.32)) {
             bot.lastFireTime = now;
             setBotFaceHint(bot, otherBot.group.position.x, otherBot.group.position.z, 900);
             bot.foeUntil = now + 2500;

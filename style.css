@@ -431,3 +431,59 @@ body.replay-mode > *:not(#canvas-container):not(#replay-ui):not(#portrait-warn):
   display: none; position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
   border-radius: 50%; background: #ff3b30; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.6); pointer-events: none;
 }
+
+/* 观战：只留画面、击杀信息、小地图（看被观战者附近的情况）和观战控制条 */
+body.spectate-mode > *:not(#canvas-container):not(#spectate-ui):not(#killfeed):not(#minimap-box):not(#bigmap-modal):not(#toast-msg):not(#portrait-warn):not(script) { display: none !important; }
+#spectate-ui {
+  display: none; position: absolute; inset: 0; z-index: 70; pointer-events: none;
+  flex-direction: column; justify-content: space-between; align-items: stretch;
+}
+#sp-top {
+  position: relative; z-index: 2; align-self: center; margin-top: 8px; max-width: calc(100vw - 260px);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
+  background: rgba(8, 10, 14, 0.72); border: 1px solid rgba(80, 200, 255, 0.7); border-radius: 6px;
+  padding: 4px 12px; font-size: 12px; text-shadow: 0 1px 2px #000;
+}
+#sp-badge { color: #4fd2ff; font-weight: 900; }
+#sp-name { color: #fff; font-weight: 900; font-size: 13px; }
+#sp-hp { width: 70px; height: 7px; background: #333; border-radius: 4px; overflow: hidden; }
+#sp-hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #3ddc84, #b6f36b); }
+#sp-wep { color: #ffd27d; font-weight: 700; }
+#sp-kills { color: #ff8a7a; font-weight: 800; }
+#sp-state { color: #9fe1ff; }
+#sp-alive { color: #ccc; }
+#sp-msg {
+  position: absolute; top: 46px; left: 50%; transform: translateX(-50%); white-space: nowrap;
+  color: #ffd27d; font-size: 14px; font-weight: 900; text-shadow: 0 1px 4px #000; opacity: 0; transition: opacity 0.25s;
+}
+#sp-list {
+  display: none; position: absolute; z-index: 3; left: 50%; top: 44px; transform: translateX(-50%);
+  width: min(460px, calc(100vw - 24px)); max-height: calc(100vh - 110px); overflow-y: auto; pointer-events: auto;
+  background: rgba(10, 12, 16, 0.92); border: 1px solid rgba(80, 200, 255, 0.6); border-radius: 8px; padding: 4px;
+}
+.sp-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 5px; font-size: 12px; cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.sp-row:hover, .sp-row.cur { background: rgba(79, 210, 255, 0.18); }
+.sp-row b { color: #fff; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-row .k { color: #ff8a7a; font-weight: 800; min-width: 44px; }
+.sp-row .w { color: #ffd27d; min-width: 74px; }
+.sp-row .s { color: #9fe1ff; min-width: 46px; }
+.sp-row .h { width: 42px; height: 5px; background: #333; border-radius: 3px; overflow: hidden; }
+.sp-row .h i { display: block; height: 100%; background: #3ddc84; }
+#sp-bottom {
+  position: relative; z-index: 2; pointer-events: auto; align-self: center; margin: 0 12px 10px;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center;
+  background: rgba(10, 12, 16, 0.84); border: 1px solid rgba(80, 200, 255, 0.5); border-radius: 8px; padding: 5px 8px;
+}
+#sp-bottom button {
+  background: #1d232c; color: #9fe1ff; border: 1px solid rgba(80, 200, 255, 0.6); border-radius: 5px;
+  padding: 6px 10px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap;
+}
+#sp-scope { display: none; position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+#sp-scope-svg { width: 100vw; height: 100vh; display: block; }
+#sp-cross {
+  display: none; position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
+  border-radius: 50%; background: #ff3b30; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.6); pointer-events: none;
+}

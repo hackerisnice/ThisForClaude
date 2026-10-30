@@ -155,7 +155,8 @@ function traceBulletSegment(b, a, dir, len) {
       botNearMiss(bot);
     }
   } else {
-    const h = bulletHitsPlayer(a, dir, len);
+    // AI 互殴的子弹只是看得见的曳光（伤害另按一轮结算，见 scheduleBotHit），穿过玩家不算
+    const h = b.info.visual ? null : bulletHitsPlayer(a, dir, len);
     if (h && (!best || h.dist < best.dist)) best = { kind: "player", dist: h.dist, point: new THREE.Vector3(h.x, h.y, h.z), head: h.head };
     // 擦着耳边飞过：子弹破空声
     if (!b.whizzed && player.phase === "ground") {
@@ -206,7 +207,8 @@ function finishBullet(b, hit) {
   const end = hit ? hit.point : b.p;
   const impact = !hit ? 0 : (hit.kind === "env" || hit.kind === "door" || hit.kind === "water" ? 2 : 1);
   // 录像：子弹轨迹（时间记在开枪那一刻，回放里按真实弹速飞）
-  replayShotEvent(b.owner === -1 ? -1 : b.owner.id, b.from.x, b.from.y, b.from.z, [end.x, end.y, end.z], [impact], 0, b.born, b.v0, b.wId);
+  // AI 互殴的外观子弹不进录像（那一轮射击回放里另有记录）
+  if (!b.info.visual) replayShotEvent(b.owner === -1 ? -1 : b.owner.id, b.from.x, b.from.y, b.from.z, [end.x, end.y, end.z], [impact], 0, b.born, b.v0, b.wId);
   if (!hit) return;
   if (hit.kind === "env") {
     const dd = hit.point.distanceTo(playerRig.position);
@@ -237,6 +239,7 @@ function finishBullet(b, hit) {
 // 主循环每帧调用
 function updateBullets(dt) {
   ballisticsClock += dt;
+  updateVisualShots();
   for (let i = activeBullets.length - 1; i >= 0; i--) {
     const b = activeBullets[i];
     const decay = Math.exp(-b.drag * dt);
@@ -277,6 +280,44 @@ function updateBullets(dt) {
 function scheduleBotHit(shooter, target, dmg, dist) {
   const t = bulletFlightTime(dist, bulletSpeedOf(shooter.weaponKey), bulletDragOf(shooter.weaponKey));
   pendingBotHits.push({ at: ballisticsClock + (isFinite(t) ? t : 0.3), target, dmg, killerName: shooter.name, wName: WEAPONS_DATA[shooter.weaponKey].name });
+}
+
+// AI 互殴的一轮射击：在镜头附近时按射速一发一发打出看得见的子弹（曳光、弹孔、打碎玻璃、枪口火光、枪声），
+// 打中的几发瞄着对手身上，打偏的从身边擦过。只是外观，伤害照旧按 scheduleBotHit 结算
+const visualShotQueue = [];
+const _vsMz = new THREE.Vector3(), _vsDir = new THREE.Vector3(), _vsPerp = new THREE.Vector3();
+function queueBotVisualVolley(shooter, target, shots, hit) {
+  if (shooter.group.position.distanceTo(playerRig.position) > 320) return;
+  const gap = 60 / Math.max(60, WEAPONS_DATA[shooter.weaponKey].rpm);
+  for (let k = 0; k < shots; k++) visualShotQueue.push({ at: ballisticsClock + k * gap, shooter, target, hit: hit && (k === 0 || Math.random() < 0.5), first: k === 0 });
+}
+function updateVisualShots() {
+  for (let i = visualShotQueue.length - 1; i >= 0; i--) {
+    const s = visualShotQueue[i];
+    if (s.at > ballisticsClock) continue;
+    visualShotQueue.splice(i, 1);
+    const b = s.shooter, t = s.target;
+    if (!b.alive || !t.alive || b.phase !== "ground" || !b.weaponKey || activeBullets.length > 120) continue;
+    const mz = botMuzzlePosition(b, _vsMz);
+    const tp = t.group.position;
+    _vsDir.set(tp.x - mz.x, tp.y + 1.15 - mz.y, tp.z - mz.z);
+    const d = _vsDir.length() || 1;
+    _vsDir.divideScalar(d);
+    // 打偏：垂直于弹道随机偏开 0.5~1.5 米；打中：落在身上
+    _vsPerp.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5);
+    _vsPerp.addScaledVector(_vsDir, -_vsPerp.dot(_vsDir)).normalize();
+    const off = s.hit ? Math.random() * 0.22 : 0.5 + Math.random() * 1.0;
+    _vsDir.multiplyScalar(d).addScaledVector(_vsPerp, off).normalize();
+    _vsDir.y += bulletZeroAngle(b.weaponKey) * Math.min(1, d / BULLET_ZERO);
+    _vsDir.normalize();
+    spawnBullet({ pos: mz, dir: _vsDir, wId: b.weaponKey, owner: b, info: { visual: true } });
+    if (!s.first) {
+      const isSupp = b.weaponAtts[b.activeSlot].muzzle === "supp";
+      const dp = b.group.position.distanceTo(playerRig.position);
+      if (!isSupp && dp < 320) spawnBotMuzzleFlash(b);
+      botShotSound(b, isSupp, dp);
+    }
+  }
 }
 
 // 子弹曳光：淡淡的一小段亮线跟着子弹飞（能看出下坠和飞行时间）

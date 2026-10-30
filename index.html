@@ -211,8 +211,32 @@
   <div id="go-replay-row">
     <button id="btn-replay-death" class="go-replay-btn">🎬 观看淘汰回放</button>
     <button id="btn-replay-kill" class="go-replay-btn">🎯 回放我的最后一杀</button>
+    <button id="btn-spectate" class="go-replay-btn">👁 观战</button>
   </div>
   <button id="btn-restart" onclick="location.reload()">再来一局</button>
+</div>
+
+<div id="spectate-ui">
+  <div id="sp-scope"><svg id="sp-scope-svg" viewBox="0 0 800 450" preserveAspectRatio="xMidYMid slice"></svg></div>
+  <div id="sp-cross"></div>
+  <div id="sp-top">
+    <span id="sp-badge">👁 观战</span>
+    <span id="sp-name"></span>
+    <div id="sp-hp"><div id="sp-hp-fill"></div></div>
+    <span id="sp-wep"></span>
+    <span id="sp-kills"></span>
+    <span id="sp-state"></span>
+    <span id="sp-alive"></span>
+  </div>
+  <div id="sp-msg"></div>
+  <div id="sp-list"></div>
+  <div id="sp-bottom">
+    <button id="sp-prev" title="上一个 (A / ←)">◀ 上一个</button>
+    <button id="sp-pick" title="选择观战对象 (Tab)">☰ 选择玩家</button>
+    <button id="sp-next" title="下一个 (D / →)">下一个 ▶</button>
+    <button id="sp-cam" title="切换视角 (C)">🎥 第三人称</button>
+    <button id="sp-exit" title="退出观战 (Esc)">✕ 退出观战</button>
+  </div>
 </div>
 
 <div id="replay-ui">
@@ -272,6 +296,7 @@
 <script src="js/vault.js"></script>
 <script src="js/input.js"></script>
 <script src="js/replay.js"></script>
+<script src="js/spectate.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

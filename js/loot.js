@@ -11,6 +11,9 @@ function killAIBot(bot, killerName, weaponName, isHeadshot, byPlayer = false) {
   if (!bot.alive) return;
   bot.alive = false;
   bot.group.visible = false;
+  // 击杀数（观战列表里显示）
+  const killerBot = aiPlayers.find(o => o.name === killerName && o !== bot);
+  if (killerBot) killerBot.kills = (killerBot.kills || 0) + 1;
   if (bot.tactic) botEndTactic(bot); // 让出狙击楼
 
   const crate = new THREE.Mesh(deathCrateGeo, deathCrateMat);
@@ -67,6 +70,7 @@ function killAIBot(bot, killerName, weaponName, isHeadshot, byPlayer = false) {
   if (aliveNow === 1 && player.phase !== "dead") {
     showGameOver(true, 1);
   }
+  spectateOnBotKilled(bot, killerBot, killerName, weaponName);
 }
 
 function damagePlayer(dmg, attackerName, wepName, isHead = false) {
@@ -95,6 +99,8 @@ function damagePlayer(dmg, attackerName, wepName, isHead = false) {
 
   if (player.hp <= 0) {
     player.phase = "dead";
+    const kb = aiPlayers.find(o => o.name === attackerName);
+    if (kb) { kb.kills = (kb.kills || 0) + 1; spectateKiller = kb; }
     unequipThrowable();
     replayOnPlayerDeath(attackerName, wepName);
     const rank = aiPlayers.filter(a => a.alive).length + 1;
@@ -110,6 +116,7 @@ function showGameOver(isWin, rank, killerInfo = "") {
     : `💀 再接再厉，本局被 ${killerInfo} 淘汰`;
   document.getElementById("go-stats").innerText = `最终排名: #${rank} / 50 | 淘汰人数: ${player.kills} | 累计伤害: ${player.totalDmg}`;
   replayOnGameOver();
+  refreshSpectateButton();
 }
 
 // ============================================================================

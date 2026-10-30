@@ -417,6 +417,8 @@ function animate() {
   if (player.phase !== "ground" && doorBtnText) updatePlayerDoorPrompt(false);
   // 录像：最近 16 秒战场（用于淘汰回放）
   replayRecordTick(dt);
+  // 观战：镜头跟着正在看的人
+  if (specState.active) updateSpectate(dt, now);
 
   camera.rotation.order = "YXZ";
   camera.rotation.y = yaw;

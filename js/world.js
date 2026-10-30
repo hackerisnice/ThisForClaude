@@ -9,6 +9,11 @@ const MAP_LIMIT = MAP_SIZE / 2 - 5;
 const FLOOR_H = 3.2;          // 楼层层高
 const STEP_UP = 0.6;          // 能直接迈上去的高度（楼梯、门槛、台阶）
 const RIVER_Z = 330, RIVER_HALF = 23;
+// 河道：水面比两岸低 0.45 米，河床往中间越来越深（最深处水深约 1.25 米，站着能蹚过去，蹲 / 趴不下去）
+const WATER_Y = -0.45, RIVER_BED_Y = -1.7;
+function riverBedAt(z) { return RIVER_BED_Y * smoothstep(RIVER_HALF, RIVER_HALF - 12, Math.abs(z - RIVER_Z)); }
+// 脚底在水面下多深（不在河里 / 在桥上为 0）
+function waterDepthAt(z, feetY) { return Math.abs(z - RIVER_Z) < RIVER_HALF + 8 ? Math.max(0, WATER_Y - feetY) : 0; }
 const BRIDGE_XS = [-720, 0, 720];
 
 // 子弹 / 视线检测用的场景物体（地形不在这里，按高度场单独求交，见 terrain.js）
@@ -394,7 +399,7 @@ function buildRoadRibbon(poly, yLift) {
     for (let k = 0; k < n; k++) pts.push([src[i][0] + (src[i + 1][0] - src[i][0]) * k / n, src[i][1] + (src[i + 1][1] - src[i][1]) * k / n]);
   }
   pts.push(src[src.length - 1]);
-  let dist = 0, cur = null, prevBase = -1;
+  let dist = 0, cur = null, prevBase = -1, gap = false;
   for (let i = 0; i < pts.length; i++) {
     const prev = pts[Math.max(0, i - 1)], next = pts[Math.min(pts.length - 1, i + 1)];
     let tx = next[0] - prev[0], tz = next[1] - prev[1];
@@ -416,7 +421,10 @@ function buildRoadRibbon(poly, yLift) {
       bb.uv.push(uj, 0, uj, 0.5, uj, 1);
       return base;
     };
-    if (cur !== b && i > 0) { prevBase = emit(i - 1, b); cur = b; }
+    // 河道里不铺路面（桥面盖着；不然路面会顺着河床钻到水底）
+    if (Math.abs(pts[i][1] - RIVER_Z) < RIVER_HALF + 6) { prevBase = -1; gap = true; continue; }
+    if (gap) { gap = false; cur = b; }
+    else if (cur !== b && i > 0) { prevBase = emit(i - 1, b); cur = b; }
     else if (cur !== b) cur = b;
     const base = emit(i, b);
     // 三角形朝上（原来的绕序朝下，从上面看会被背面剔除，路面根本画不出来）
@@ -464,20 +472,61 @@ POIS.forEach(p => { POI_BY_KEY[p.key] = p; p.buildings = []; });
 // ---------------------------------------------------------------------------
 const TERRAIN_EXT = 900;
 const TERRAIN_SIZE = MAP_SIZE + TERRAIN_EXT * 2;
-waterNormalTex.repeat.set(TERRAIN_SIZE / 24, (RIVER_HALF * 2) / 24);
-const riverMesh = new THREE.Mesh(
-  new THREE.PlaneGeometry(TERRAIN_SIZE, RIVER_HALF * 2),
-  new THREE.MeshPhongMaterial({
-    color: 0x24607f, specular: 0x9fc4d8, shininess: 70,
-    normalMap: waterNormalTex, normalScale: new THREE.Vector2(0.55, 0.55),
-    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1
-  })
-);
-riverMesh.rotation.x = -Math.PI / 2;
-riverMesh.position.set(0, 0.02, RIVER_Z);
-riverMesh.receiveShadow = true;
-scene.add(riverMesh);
-freezeObject(riverMesh);
+// 水面：天空反射（菲涅尔：斜着看像镜子，低头看能看见水底）+ 浅处透明深处浑浊 + 顺流而下的波纹 + 太阳反光 + 岸边白沫。
+// 网格在 terrain.js 里按地形格子生成（每个顶点带水深）
+const waterMat = new THREE.ShaderMaterial({
+  uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
+    nMap: { value: null }, time: { value: 0 }, sunDir: { value: SUN_DIR },
+    skyTop: { value: SKY_TOP_COLOR }, skyHorizon: { value: SKY_HORIZON_COLOR }
+  }]),
+  vertexShader: `
+    attribute float depth;
+    varying vec3 vWorld; varying float vDepth;
+    #include <fog_pars_vertex>
+    void main() {
+      vec4 wp = modelMatrix * vec4(position, 1.0);
+      vWorld = wp.xyz; vDepth = depth;
+      vec4 mvPosition = viewMatrix * wp;
+      gl_Position = projectionMatrix * mvPosition;
+      #include <fog_vertex>
+    }`,
+  fragmentShader: `
+    uniform sampler2D nMap; uniform float time; uniform vec3 sunDir; uniform vec3 skyTop; uniform vec3 skyHorizon;
+    varying vec3 vWorld; varying float vDepth;
+    #include <fog_pars_fragment>
+    vec2 nrm(vec2 uv) { return texture2D(nMap, uv).rg * 2.0 - 1.0; }
+    void main() {
+      vec2 p = vWorld.xz;
+      // 三层波纹，都顺着河往 +x 流（大波慢、小波快）
+      vec2 n1 = nrm(p * 0.043 + vec2(time * 0.030, time * 0.006));
+      vec2 n2 = nrm(p * 0.110 + vec2(time * 0.055, -time * 0.018));
+      vec2 n3 = nrm(p * 0.012 + vec2(time * 0.010, 0.0));
+      vec2 nn = n1 + n2 * 0.55 + n3 * 0.7;
+      vec3 n = normalize(vec3(nn.x * 0.7, 6.0, nn.y * 0.7));
+      vec3 V = normalize(cameraPosition - vWorld);
+      float ndv = max(dot(n, V), 0.0);
+      float fres = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
+      vec3 R = reflect(-V, n);
+      // 反射：天空；贴近水平的方向反射的是对岸的草坡和树（偏暗的绿褐色）
+      vec3 refl = mix(skyHorizon, skyTop, pow(clamp(R.y, 0.0, 1.0), 0.55));
+      refl = mix(vec3(0.20, 0.25, 0.17), refl, smoothstep(0.015, 0.11, R.y));
+      float d = max(vDepth, 0.0);
+      float dk = smoothstep(0.0, 1.2, d);
+      vec3 body = mix(vec3(0.20, 0.25, 0.18), vec3(0.035, 0.085, 0.085), dk) * (0.75 + 0.35 * sunDir.y);
+      vec3 col = mix(body, refl, fres);
+      float sd = max(dot(R, sunDir), 0.0);
+      float spec = pow(sd, 420.0) * 5.0 + pow(sd, 48.0) * 0.12;
+      col += vec3(1.0, 0.95, 0.85) * spec;
+      // 岸边浅水的白沫
+      float foam = (1.0 - smoothstep(0.0, 0.16, d)) * smoothstep(-0.2, 0.6, nn.x);
+      col = mix(col, vec3(0.80, 0.83, 0.80), foam * 0.4);
+      float alpha = clamp(max(mix(0.30, 0.93, dk), fres) + spec, 0.0, 1.0) * smoothstep(0.0, 0.05, d);
+      gl_FragColor = vec4(col, alpha);
+      #include <fog_fragment>
+    }`,
+  transparent: true, depthWrite: false, fog: true
+});
+waterMat.uniforms.nMap.value = waterNormalTex;
 
 // 蓝圈电网：竖向流动扫描线 + 底部辉光，顶部渐隐
 const blueZoneGeo = new THREE.CylinderGeometry(1, 1, 180, 72, 1, true);

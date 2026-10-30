@@ -53,12 +53,36 @@ function writeDoorMatrices(d) {
     doorMesh.setMatrixAt(d.slot * 2 + i, _dm);
   }
 }
+// 门板贴图：木纹 + 凹进去的门芯板（高光 / 阴影勾边）+ 门把手；颜色由实例颜色染成各种木色
+const doorTex = makeCanvasTexture(128, (ctx, s) => {
+  const W = s, H = s * 2;
+  ctx.canvas.height = H;
+  const img = ctx.createImageData(W, H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const g = 0.86 + 0.08 * Math.sin((x / W * 9 + fbm(x / W * 2, y / H * 14, 5, 3, 2) * 3) * Math.PI) + (hash2(x, y, 4) - 0.5) * 0.05;
+    const i = (y * W + x) * 4;
+    img.data[i] = 255 * g; img.data[i + 1] = 246 * g; img.data[i + 2] = 236 * g; img.data[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  // 门芯板：上两块、下一块
+  const panel = (x0, y0, x1, y1) => {
+    ctx.fillStyle = "rgba(0,0,0,0.10)"; ctx.fillRect(x0 * W, y0 * H, (x1 - x0) * W, (y1 - y0) * H);
+    ctx.fillStyle = "rgba(0,0,0,0.35)"; ctx.fillRect(x0 * W, y0 * H, (x1 - x0) * W, 3); ctx.fillRect(x0 * W, y0 * H, 3, (y1 - y0) * H);
+    ctx.fillStyle = "rgba(255,255,255,0.35)"; ctx.fillRect(x0 * W, y1 * H - 3, (x1 - x0) * W, 3); ctx.fillRect(x1 * W - 3, y0 * H, 3, (y1 - y0) * H);
+  };
+  panel(0.16, 0.07, 0.84, 0.36);
+  panel(0.16, 0.44, 0.84, 0.62);
+  panel(0.16, 0.7, 0.84, 0.93);
+  // 门把手（靠门缝那一边）
+  ctx.fillStyle = "#2a2826"; ctx.fillRect(0.86 * W, 0.47 * H, 0.08 * W, 0.05 * H);
+  ctx.fillStyle = "#c8c0a8"; ctx.beginPath(); ctx.arc(0.9 * W, 0.495 * H, 0.035 * W, 0, Math.PI * 2); ctx.fill();
+}, false);
 function ensureDoorMesh() {
   if (doorMesh || !doors.length) return;
   const geo = new THREE.BoxGeometry(1, 1, 1);
   geo.translate(0.5, 0.5, 0);
   // 木色每扇门略有不同（实例颜色）
-  doorMesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0xffffff }), doors.length * 2);
+  doorMesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0xffffff, map: doorTex }), doors.length * 2);
   doorMesh.frustumCulled = false; // r128 的实例网格不按实例算包围球
   doorMesh.castShadow = true;
   doorMesh.receiveShadow = true;
@@ -195,6 +219,7 @@ function toggleDoor(d) {
 const movingDoors = new Set();
 function updateDoors(dt) {
   ensureDoorMesh();
+  refreshGlassSlots();
   if (!doorMesh) return;
   refreshDoorSlots(false);
   for (const d of doors) {

@@ -179,6 +179,12 @@ class SoundEngine {
     this.init();
     if (vol <= 0.004) return;
     if (crawl) { this.noiseBurst(0.22, "bandpass", 900, 0.6, vol * 0.8, pan, 0.22); return; }
+    if (surface === "water") {
+      // 蹚水：低沉的哗啦声 + 水花溅起的嘶声
+      this.noiseBurst(0.32, "lowpass", 700, 0.8, vol * 1.5, pan, 0.32, 260);
+      this.noiseBurst(0.22, "bandpass", 2600, 0.7, vol * 0.7, pan, 0.22, 1200);
+      return;
+    }
     if (surface === "grass") {
       this.noiseBurst(0.11, "lowpass", 1400, 0.7, vol * 0.9, pan, 0.1);
       this.noiseBurst(0.05, "highpass", 3500, 0.5, vol * 0.25, pan, 0.05);
@@ -243,6 +249,21 @@ class SoundEngine {
     g.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
     osc.connect(g); g.connect(this.out(0));
     osc.start(now); osc.stop(now + 0.05);
+  }
+  // 玻璃碎裂：一声脆响 + 几片碎玻璃落地的叮当声
+  playGlass(dist, pan) {
+    this.init();
+    const v = Math.max(0, 1 - dist / 120);
+    if (v < 0.02) return;
+    this.noiseBurst(0.18, "highpass", 3800, 0.7, 0.32 * v, pan, 0.18);
+    this.noiseBurst(0.09, "bandpass", 6200, 3, 0.2 * v, pan, 0.09);
+    for (let k = 0; k < 4; k++) {
+      const t = this.ctx.currentTime + 0.08 + Math.random() * 0.35;
+      const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+      o.type = "sine"; o.frequency.value = 3200 + Math.random() * 3800;
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.06 * v, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+      o.connect(g); g.connect(this.out(pan)); o.start(t); o.stop(t + 0.14);
+    }
   }
   // 子弹擦着耳边飞过的破空声
   playWhiz(pan) {
@@ -354,6 +375,7 @@ function stereoPanFor(x, z) {
 
 // 脚下材质：楼内木地板、屋顶/桥面/遗迹石头、柏油路、土路、草地
 function surfaceTypeAt(x, z, feetY) {
+  if (waterDepthAt(z, feetY) > 0.02) return "water";
   if (feetY - terrainH(x, z) > 0.1) {
     const b = getBuildingContainingPoint(x, z, 0);
     if (b && b.kind !== "ruin" && (b.roofY === null || feetY < b.roofY - 0.3)) return "wood";

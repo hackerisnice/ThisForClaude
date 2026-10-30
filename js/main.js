@@ -137,8 +137,10 @@ function animate() {
       if (player.casting && player.casting.title.includes("💊")) cancelCastProgress();
       const boostSpeed = player.boost > 60 ? 1.12 : 1.0;
       const stanceSpeed = player.stance === "stand" ? 6.8 : (player.stance === "crouch" ? 4.4 : 2.3);
+      // 蹚水：水越深走得越慢（齐腰深时不到一半速度）
+      const wade = 1 - Math.min(0.58, waterDepthAt(playerRig.position.z, player.feetY) * 0.5);
       // 取消走路：所有姿态一律按冲刺速度移动（站立 8.84 m/s，蹲 5.7，趴 3.0）
-      const speed = stanceSpeed * boostSpeed * PLAYER_SPRINT_MULT * dt;
+      const speed = stanceSpeed * boostSpeed * PLAYER_SPRINT_MULT * wade * dt;
       const forward = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
       const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
       const moveDelta = new THREE.Vector3()
@@ -182,6 +184,13 @@ function animate() {
       }
     } else {
       player.feetY = groundNow;
+    }
+    // 水深过膝就蹲不下、趴不下（头会没进水里）
+    const wDepth = waterDepthAt(gz, player.feetY);
+    if (wDepth > 0.5 && player.stance !== "stand") { player.stance = "stand"; updateAllHUD(); }
+    // 走进水里 / 在水里走动：脚边泛起水花
+    if (wDepth > 0.05 && playerMoving && Math.random() < dt * 6) {
+      spawnFx({ pos: new THREE.Vector3(gx + (Math.random() - 0.5) * 0.6, WATER_Y + 0.05, gz + (Math.random() - 0.5) * 0.6), color: 0xd8e4e8, s0: 0.3, s1: 1.1, a0: 0.55, a1: 0, life: 0.5, rise: 0.4 });
     }
     player.eyeH += (STANCE_EYE[player.stance] - player.eyeH) * Math.min(1, dt * 10);
     playerRig.position.y = player.feetY + player.eyeH;
@@ -429,7 +438,8 @@ function renderFrame(elapsed) {
   skyDome.position.copy(playerRig.position);
   skyMat.uniforms.time.value = elapsed;
   blueZoneMat.uniforms.time.value = elapsed;
-  waterNormalTex.offset.set(elapsed * 0.012, elapsed * 0.02);
+  waterMat.uniforms.time.value = elapsed;
+  updateGrass(elapsed);
   updateSunShadowCenter();
   if (sunLight.castShadow) {
     renderer.shadowMap.needsUpdate = quality.frameCounter % QUALITY_PRESETS[quality.tier].shadowEvery === 0;

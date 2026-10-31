@@ -28,12 +28,17 @@ treeImpTex.anisotropy = MAX_ANISO;
 const treeImpMat = new THREE.MeshLambertMaterial({ map: treeImpTex, vertexColors: true, alphaTest: 0.5, visible: false });
 // 阴影也按叶子的形状投（透明处不投影）
 const treeImpDepthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: treeImpTex, alphaTest: 0.5 });
-const treeImpMeshes = [];
-let treeImpReady = false;
+// 立体树：叶簇 / 冷杉枝条贴图集 + 树皮
+const leafTex = new THREE.Texture();
+leafTex.anisotropy = MAX_ANISO;
+const leafMat = new THREE.MeshLambertMaterial({ map: leafTex, vertexColors: true, alphaTest: 0.5, visible: false });
+const leafDepthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: leafTex, alphaTest: 0.5 });
+const treeBarkMat = new THREE.MeshLambertMaterial({ map: barkTex, vertexColors: true });
+const treeAlphaMeshes = [];   // 用透明贴图的树网格（贴图解码好之前不投影子）
+let treeImpReady = false, leafReady = false;
 // 颜色 JPEG + 透明度 PNG 拼成一张带透明的贴图，再自己做缩小的各级 mipmap：
 // 每级都把透明度适当放大，保持“不透明部分”的面积不变 —— 否则远处的树会越缩越稀，最后只剩树干
-function loadTreeImpostors() {
-  if (typeof TEX_DATA === "undefined" || !TEX_DATA.treeC) return;
+function loadAlphaAtlas(colorUrl, alphaUrl, tex, onReady) {
   const ci = new Image(), ai = new Image();
   let n = 0;
   const pixels = (img) => {
@@ -79,29 +84,48 @@ function loadTreeImpostors() {
       mips.push(out);
       prev = out;
     }
-    treeImpTex.image = base;
-    treeImpTex.mipmaps = mips;
-    treeImpTex.generateMipmaps = false;
-    treeImpTex.minFilter = THREE.LinearMipmapLinearFilter;
-    treeImpTex.needsUpdate = true;
-    treeImpMat.visible = true;
-    treeImpReady = true;
-    treeImpMeshes.forEach(m => { m.castShadow = true; });
+    tex.image = base;
+    tex.mipmaps = mips;
+    tex.generateMipmaps = false;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.needsUpdate = true;
+    onReady();
+    treeAlphaMeshes.forEach(m => { m.castShadow = m.material.visible; });
     renderer.shadowMap.needsUpdate = true;
   };
   ci.onload = done; ai.onload = done;
-  ci.src = TEX_DATA.treeC; ai.src = TEX_DATA.treeA;
+  ci.src = colorUrl; ai.src = alphaUrl;
 }
-loadTreeImpostors();
+if (typeof TEX_DATA !== "undefined" && TEX_DATA.treeC) loadAlphaAtlas(TEX_DATA.treeC, TEX_DATA.treeA, treeImpTex, () => { treeImpMat.visible = true; treeImpReady = true; });
+if (typeof TEX_DATA !== "undefined" && TEX_DATA.leafC) loadAlphaAtlas(TEX_DATA.leafC, TEX_DATA.leafA, leafTex, () => { leafMat.visible = true; leafReady = true; });
 
-// 按 250 米方格合并成少数几个网格（和房子 / 岩石的合批一样，远处整块不画）
-const treeImpBuckets = new Map();
+// ---------------------------------------------------------------------------
+// 树的分块与远近两套模型：按 200 米方格合批。镜头附近的方格画立体树（树干、枝杈是几何体，
+// 树冠是几十片朝向各不相同的叶簇 / 冷杉枝条面片，从哪个角度看都有体积）；远处的方格换成两张交叉的贴图树
+// ---------------------------------------------------------------------------
+const TREE_CELL = 200;
+const TREE_LOD_DIST = 280;     // 方格中心离镜头多近画立体树
+const treeBuckets = new Map();
+const treeCells = [];          // 有树的方格（远处贴图网格 + 近处立体模型按需生成）
+const mkGeoArrays = () => ({ pos: [], nor: [], uv: [], col: [], idx: [] });
+function treeBucket(x, z) {
+  const i = Math.floor(x / TREE_CELL), j = Math.floor(z / TREE_CELL), key = i + "|" + j;
+  let b = treeBuckets.get(key);
+  if (!b) {
+    b = { cx: (i + 0.5) * TREE_CELL, cz: (j + 0.5) * TREE_CELL, imp: mkGeoArrays(), trees: [], far: null, near: null };
+    treeBuckets.set(key, b);
+    treeCells.push(b);
+  }
+  return b;
+}
+// 立体树的随机数：每棵树按自己的位置定种子（离远了释放、走回来重新生成，长得一模一样）
+let _treeSeed = 1;
+const trnd = () => { _treeSeed = (Math.imul(_treeSeed, 1664525) + 1013904223) >>> 0; return _treeSeed / 4294967296; };
+function seedTree(x, z) { _treeSeed = (Math.imul(Math.round(x * 10), 73856093) ^ Math.imul(Math.round(z * 10), 19349663)) >>> 0 || 7; }
+// 远处：两张互相垂直的面片（与烘焙时转 0° / 90° 拍的两张图对应）
 function addTreeImpostor(tx, gy, tz, type, scale, rot, tint, sink = 0.15) {
-  const key = Math.floor(tx / BATCH_CELL) + "|" + Math.floor(tz / BATCH_CELL);
-  let b = treeImpBuckets.get(key);
-  if (!b) { b = { pos: [], nor: [], uv: [], col: [], idx: [] }; treeImpBuckets.set(key, b); }
+  const b = treeBucket(tx, tz).imp;
   const c = Math.cos(rot), s = Math.sin(rot);
-  // 两张面片：第一张沿模型的 X 轴，第二张沿 Z 轴（与烘焙时转 0° / 90° 拍的两张图对应）
   const axes = [[c, -s], [s, c]];
   for (let k = 0; k < 2; k++) {
     const v = type.views[k], [ax, az] = axes[k];
@@ -121,25 +145,227 @@ function addTreeImpostor(tx, gy, tz, type, scale, rot, tint, sink = 0.15) {
     b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3, base, base + 2, base + 1, base, base + 3, base + 2);
   }
 }
+
+// 叶簇贴图集里的格子（树冠俯视 / 两个侧视，冷杉枝条 4 种：树干那头在 u0，枝梢在 u1）
+const LEAF_CELLS = {
+  top: { u0: 0, v0: 0.5, u1: 0.5, v1: 1 },
+  side: [{ u0: 0.5, v0: 0.75, u1: 1, v1: 1 }, { u0: 0.5, v0: 0.5, u1: 1, v1: 0.75 }],
+  frond: [{ u0: 0, v0: 0.25, u1: 0.5, v1: 0.5 }, { u0: 0.5, v0: 0.25, u1: 1, v1: 0.5 }, { u0: 0, v0: 0, u1: 0.5, v1: 0.25 }, { u0: 0.5, v0: 0, u1: 1, v1: 0.25 }]
+};
+const _tA = new THREE.Vector3(), _tU = new THREE.Vector3(), _tV = new THREE.Vector3(), _tN = new THREE.Vector3(), _tP = new THREE.Vector3();
+// 一张叶片面片：o = 起点（u 方向从 o 出发长 lu；v 方向以 o 为中心宽 2·hv），法线 / 颜色由 shade(p) 给出
+function addLeafCard(b, o, u, lu, v, hv, cell, shade, flipV) {
+  const base = b.pos.length / 3;
+  for (const [su, sv] of [[0, -1], [1, -1], [1, 1], [0, 1]]) {
+    _tP.copy(o).addScaledVector(u, su * lu).addScaledVector(v, sv * hv);
+    b.pos.push(_tP.x, _tP.y, _tP.z);
+    const r = shade(_tP);
+    b.nor.push(r[0], r[1], r[2]);
+    b.col.push(r[3], r[4], r[5]);
+    b.uv.push(su ? cell.u1 : cell.u0, (sv > 0) !== !!flipV ? cell.v1 : cell.v0);
+  }
+  b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3, base, base + 2, base + 1, base, base + 3, base + 2);
+}
+// 一段树干 / 枝杈：沿折线的锥管（rings：[[x, y, z, 半径], ...]），seg 条棱，树皮纹理沿长度方向
+function addBarkTube(b, rings, seg, tint) {
+  let vAcc = 0;
+  for (let r = 0; r < rings.length; r++) {
+    const [x, y, z, rad] = rings[r];
+    if (r > 0) vAcc += Math.hypot(x - rings[r - 1][0], y - rings[r - 1][1], z - rings[r - 1][2]) / 1.6;
+    // 这一圈的轴向（相邻两圈连线）
+    const p = rings[Math.max(0, r - 1)], q = rings[Math.min(rings.length - 1, r + 1)];
+    _tA.set(q[0] - p[0], q[1] - p[1], q[2] - p[2]).normalize();
+    _tU.set(0, 0, 1).cross(_tA);
+    if (_tU.lengthSq() < 1e-4) _tU.set(1, 0, 0).cross(_tA);
+    _tU.normalize();
+    _tV.crossVectors(_tA, _tU).normalize();
+    const shade = 0.72 + 0.28 * Math.min(1, r / 2);
+    for (let k = 0; k <= seg; k++) {
+      const a = k / seg * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
+      _tN.copy(_tU).multiplyScalar(ca).addScaledVector(_tV, sa);
+      b.pos.push(x + _tN.x * rad, y + _tN.y * rad, z + _tN.z * rad);
+      b.nor.push(_tN.x, _tN.y, _tN.z);
+      b.uv.push(k / seg * 1.5, vAcc);
+      b.col.push(tint[0] * shade, tint[1] * shade, tint[2] * shade);
+    }
+  }
+  const base = b.pos.length / 3 - rings.length * (seg + 1);
+  for (let r = 0; r < rings.length - 1; r++) {
+    for (let k = 0; k < seg; k++) {
+      const a = base + r * (seg + 1) + k, c = a + seg + 1;
+      b.idx.push(a, c, a + 1, a + 1, c, c + 1);
+    }
+  }
+}
+const _rv = () => trnd() - 0.5;
+// 阔叶树：歪扭的树干分出几根枝杈，树冠是椭球形里随机朝向的一团叶簇
+function addBroadleaf3D(B, tx, gy, tz, s, tint) {
+  const th = (2.0 + trnd() * 0.8) * s, r0 = 0.24 * s;
+  const lx = _rv() * 0.5 * s, lz = _rv() * 0.5 * s;
+  const top = [tx + lx, gy + th, tz + lz];
+  const barkT = [0.55, 0.47, 0.38];
+  addBarkTube(B.bark, [[tx, gy - 0.2, tz, r0 * 1.25], [tx + lx * 0.35, gy + th * 0.5, tz + lz * 0.35, r0], [top[0], top[1], top[2], r0 * 0.72]], 7, barkT);
+  const Rh = (2.7 + trnd() * 0.5) * s, Rv = 1.65 * s;
+  const C = new THREE.Vector3(top[0], top[1] + 1.25 * s, top[2]);
+  const nb = 4 + (trnd() < 0.5 ? 1 : 0), a0 = trnd() * 6.28;
+  for (let k = 0; k < nb; k++) {
+    const a = a0 + k / nb * Math.PI * 2 + _rv() * 0.6, reach = Rh * (0.5 + trnd() * 0.25);
+    const ex = top[0] + Math.cos(a) * reach, ez = top[2] + Math.sin(a) * reach, ey = top[1] + (0.8 + trnd() * 0.8) * s;
+    addBarkTube(B.bark, [[top[0], top[1] - 0.15, top[2], r0 * 0.5], [(top[0] + ex) / 2, (top[1] + ey) / 2 + 0.25 * s, (top[2] + ez) / 2, r0 * 0.32], [ex, ey, ez, r0 * 0.12]], 5, barkT);
+  }
+  const shade = p => {
+    const dx = (p.x - C.x) / Rh, dy = (p.y - C.y) / Rv, dz = (p.z - C.z) / Rh;
+    const nl = Math.hypot(dx, dy + 0.45, dz) || 1;
+    const k = 0.55 + 0.45 * Math.min(1, Math.max(0, (dy + 1) / 2));
+    return [dx / nl, (dy + 0.45) / nl, dz / nl, tint[0] * k, tint[1] * k, tint[2] * k];
+  };
+  const n = 24 + Math.floor(trnd() * 6);
+  for (let k = 0; k < n; k++) {
+    // 位置：树冠椭球里偏外层；朝向随机（俯视叶团）或者大致竖直（侧视叶团，底边朝下）
+    _tN.set(_rv(), trnd() * 1.1 - 0.4, _rv()).normalize();
+    const rr = 0.4 + trnd() * 0.55;
+    const P = new THREE.Vector3(C.x + _tN.x * Rh * rr, C.y + _tN.y * Rv * rr, C.z + _tN.z * Rh * rr);
+    const sideView = trnd() < 0.4;
+    const u = new THREE.Vector3(), v = new THREE.Vector3();
+    if (sideView) {
+      const a = trnd() * 6.28;
+      u.set(Math.cos(a), 0, Math.sin(a));
+      v.set(_rv() * 0.3, 1, _rv() * 0.3).normalize();
+      const hu = (1.25 + trnd() * 0.45) * s;
+      addLeafCard(B.leaf, P.clone().addScaledVector(u, -hu), u, hu * 2, v.multiplyScalar(1).clone(), hu * 0.5, LEAF_CELLS.side[k & 1], shade);
+    } else {
+      const nrm = new THREE.Vector3(_rv(), trnd() * 0.9 + 0.1, _rv()).normalize();
+      u.set(_rv(), _rv(), _rv()).cross(nrm).normalize();
+      v.crossVectors(nrm, u);
+      const hs = (0.95 + trnd() * 0.45) * s;
+      addLeafCard(B.leaf, P.clone().addScaledVector(u, -hs), u, hs * 2, v, hs, LEAF_CELLS.top, shade, trnd() < 0.5);
+    }
+  }
+}
+// 冷杉：笔直的锥形树干，一层层轮生、往下垂的枝条（每根枝条两张交叉的面片：平铺的 + 竖着的），越往上越短
+function addFir3D(B, tx, gy, tz, H, s, tint) {
+  addBarkTube(B.bark, [[tx, gy - 0.2, tz, 0.24 * s], [tx, gy + H * 0.5, tz, 0.14 * s], [tx, gy + H, tz, 0.03]], 6, [0.5, 0.42, 0.36]);
+  const y0 = 1.2 * s, R0 = 2.5 * s, step = 0.72 * s;
+  const shadeFor = (cy, R) => p => {
+    const dx = p.x - tx, dz = p.z - tz, rad = Math.hypot(dx, dz) || 1;
+    const out = Math.min(1, rad / Math.max(0.5, R));
+    const ny = 0.75, nl = Math.hypot(dx / rad * out, ny, dz / rad * out);
+    const k = (0.55 + 0.45 * Math.min(1, (p.y - gy) / H)) * (0.78 + 0.22 * out);
+    return [dx / rad * out / nl, ny / nl, dz / rad * out / nl, tint[0] * k, tint[1] * k, tint[2] * k];
+  };
+  const fr = LEAF_CELLS.frond;
+  let a0 = trnd() * 6.28;
+  for (let y = y0; y < H - 0.5; y += step * (0.85 + trnd() * 0.3)) {
+    const f = (y - y0) / (H - y0), R = R0 * Math.pow(1 - f, 0.95) + 0.35;
+    const nBr = f > 0.75 ? 4 : 5;
+    a0 += 0.7 + trnd() * 0.5;
+    const shade = shadeFor(y, R);
+    for (let k = 0; k < nBr; k++) {
+      const a = a0 + k / nBr * Math.PI * 2 + _rv() * 0.35, droop = 0.22 + 0.25 * (1 - f) + _rv() * 0.1;
+      const L = R * (1.0 + _rv() * 0.2);
+      const u = new THREE.Vector3(Math.cos(a) * Math.cos(droop), -Math.sin(droop), Math.sin(a) * Math.cos(droop));
+      const tang = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a));
+      const up = new THREE.Vector3().crossVectors(tang, u).normalize();
+      const o = new THREE.Vector3(tx, gy + y, tz);
+      const cell = fr[(k + Math.floor(y * 3)) & 3];
+      addLeafCard(B.leaf, o, u, L, tang, L * 0.27, cell, shade);                 // 平铺的枝条
+      addLeafCard(B.leaf, o, u, L, up, L * 0.2, cell, shade, true);              // 竖着的一片，侧面看也有厚度
+    }
+  }
+  // 树尖
+  const shade = shadeFor(H, 0.6);
+  const tipL = 1.5 * s, o = new THREE.Vector3(tx, gy + H - tipL * 0.75, tz), up = new THREE.Vector3(0, 1, 0);
+  addLeafCard(B.leaf, o, up, tipL, new THREE.Vector3(1, 0, 0), tipL * 0.25, fr[0], shade);
+  addLeafCard(B.leaf, o, up, tipL, new THREE.Vector3(0, 0, 1), tipL * 0.25, fr[1], shade);
+}
+// 灌木：贴地的一小团叶簇
+function addBush3D(B, bx, gy, bz, s, tint) {
+  const C = new THREE.Vector3(bx, gy + 0.55 * s, bz), Rh = 1.05 * s, Rv = 0.6 * s;
+  const shade = p => {
+    const dx = (p.x - C.x) / Rh, dy = (p.y - C.y) / Rv, dz = (p.z - C.z) / Rh;
+    const nl = Math.hypot(dx, dy + 0.6, dz) || 1, k = 0.6 + 0.4 * Math.min(1, Math.max(0, (dy + 1) / 2));
+    return [dx / nl, (dy + 0.6) / nl, dz / nl, tint[0] * k, tint[1] * k, tint[2] * k];
+  };
+  for (let k = 0; k < 5; k++) {
+    const a = trnd() * 6.28, P = new THREE.Vector3(C.x + Math.cos(a) * Rh * 0.35, C.y + _rv() * Rv * 0.5, C.z + Math.sin(a) * Rh * 0.35);
+    const u = new THREE.Vector3(Math.cos(a + 1.57), _rv() * 0.4, Math.sin(a + 1.57)).normalize();
+    const v = new THREE.Vector3(_rv() * 0.5, 1, _rv() * 0.5).normalize();
+    const hu = (0.85 + trnd() * 0.3) * s;
+    if (k < 3) addLeafCard(B.leaf, P.clone().addScaledVector(u, -hu), u, hu * 2, v, hu * 0.55, LEAF_CELLS.side[k & 1], shade);
+    else {
+      const nrm = new THREE.Vector3(_rv(), 1, _rv()).normalize(), uu = new THREE.Vector3(_rv(), 0, _rv()).cross(nrm).normalize(), vv = new THREE.Vector3().crossVectors(nrm, uu);
+      addLeafCard(B.leaf, P.clone().addScaledVector(uu, -hu * 0.8), uu, hu * 1.6, vv, hu * 0.8, LEAF_CELLS.top, shade);
+    }
+  }
+}
+
+function makeTreeMesh(d, mat, depth) {
+  if (!d.idx.length) return null;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(d.pos, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(d.nor, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(d.uv, 2));
+  g.setAttribute("color", new THREE.Float32BufferAttribute(d.col, 3));
+  g.setIndex(d.idx);
+  g.computeBoundingSphere();
+  Object.values(g.attributes).forEach(a => a.onUpload(freeUploadedArray));
+  g.index.onUpload(freeUploadedArray);
+  const m = new THREE.Mesh(g, mat);
+  if (depth) m.customDepthMaterial = depth;
+  m.castShadow = mat.visible;
+  m.receiveShadow = true;
+  m.matrixAutoUpdate = false;
+  scene.add(m);
+  return m;
+}
+// 远处的贴图树：地图生成完一次建好
 function flushTreeImpostors() {
-  treeImpBuckets.forEach(b => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.Float32BufferAttribute(b.pos, 3));
-    g.setAttribute("normal", new THREE.Float32BufferAttribute(b.nor, 3));
-    g.setAttribute("uv", new THREE.Float32BufferAttribute(b.uv, 2));
-    g.setAttribute("color", new THREE.Float32BufferAttribute(b.col, 3));
-    g.setIndex(b.idx);
-    g.computeBoundingSphere();
-    const m = new THREE.Mesh(g, treeImpMat);
-    m.customDepthMaterial = treeImpDepthMat;
-    m.castShadow = treeImpReady;
-    m.receiveShadow = true;
-    m.matrixAutoUpdate = false;
-    scene.add(m);
-    treeImpMeshes.push(m);
-    staticBatchMeshes.push(m);
+  treeCells.forEach(c => {
+    c.far = makeTreeMesh(c.imp, treeImpMat, treeImpDepthMat);
+    c.imp = null;
+    if (c.far) treeAlphaMeshes.push(c.far);
   });
-  treeImpBuckets.clear();
+  treeBuckets.clear();
+}
+// 近处的立体树：方格进入范围时现场生成（每次最多生成 2 格，避免卡顿），离远了释放
+function buildTreeCellNear(c) {
+  const leaf = mkGeoArrays(), bark = mkGeoArrays();
+  for (const t of c.trees) {
+    seedTree(t.x, t.z);
+    if (t.kind === "broad") addBroadleaf3D({ leaf, bark }, t.x, t.gy, t.z, t.s, t.tint);
+    else if (t.kind === "fir") addFir3D({ leaf, bark }, t.x, t.gy, t.z, t.H, t.s, t.tint);
+    else addBush3D({ leaf, bark }, t.x, t.gy, t.z, t.s, t.tint);
+  }
+  const lm = makeTreeMesh(leaf, leafMat, leafDepthMat), bm = makeTreeMesh(bark, treeBarkMat, null);
+  if (lm) treeAlphaMeshes.push(lm);
+  c.near = [lm, bm].filter(Boolean);
+}
+function disposeTreeCellNear(c) {
+  c.near.forEach(m => {
+    scene.remove(m);
+    m.geometry.dispose();
+    const k = treeAlphaMeshes.indexOf(m);
+    if (k >= 0) treeAlphaMeshes.splice(k, 1);
+  });
+  c.near = null;
+}
+let treeLODAt = null;
+function updateTreeLOD(px, pz) {
+  let built = 0, pending = false;
+  for (const c of treeCells) {
+    const dc = Math.hypot(c.cx - px, c.cz - pz);
+    const wantNear = dc < TREE_LOD_DIST;
+    if (wantNear && !c.near) {
+      if (built < 2) { buildTreeCellNear(c); built++; } else pending = true;
+    } else if (!wantNear && c.near && dc > TREE_LOD_DIST + 220) disposeTreeCellNear(c);
+    const nearOn = wantNear && !!c.near;
+    if (c.near) c.near.forEach(m => { m.visible = nearOn; });
+    if (c.far) {
+      const s = c.far.geometry.boundingSphere;
+      c.far.visible = !nearOn && Math.hypot(s.center.x - px, s.center.z - pz) - s.radius < BATCH_VIEW_DIST;
+    }
+  }
+  return pending;
 }
 
 // 植被摆放点是否合适：不出界、不在河里/路上、不压建筑
@@ -155,12 +381,19 @@ function propBaseY(x, z, r) {
 }
 
 // 树林里冷杉多，零散的树阔叶树多
+const treeList = []; // { x, z, broad }（调试 / 测试用）
 function plantTree(tx, tz, forest = false) {
   const gy = propBaseY(tx, tz, 0.5);
   const type = TREE_TYPES[Math.random() < (forest ? 0.8 : 0.45) ? (Math.random() < 0.5 ? 0 : 1) : 2];
   const scale = type.s0 + Math.random() * (type.s1 - type.s0);
   const t = 0.88 + Math.random() * 0.2;
-  addTreeImpostor(tx, gy, tz, type, scale, Math.random() * Math.PI * 2, [t * (0.96 + Math.random() * 0.08), t, t * (0.94 + Math.random() * 0.08)]);
+  const tint = [t * (0.96 + Math.random() * 0.08), t, t * (0.94 + Math.random() * 0.08)];
+  addTreeImpostor(tx, gy, tz, type, scale, Math.random() * Math.PI * 2, tint);
+  // 近处的立体模型（大小和远处的贴图树一致，切换时不会突然变样）
+  treeList.push({ x: tx, z: tz, broad: type === TREE_TYPES[2] });
+  const cell = treeBucket(tx, tz);
+  if (type === TREE_TYPES[2]) cell.trees.push({ kind: "broad", x: tx, gy, z: tz, s: scale / 1.8, tint });
+  else cell.trees.push({ kind: "fir", x: tx, gy, z: tz, H: type.views[0].h * scale * 0.85, s: scale, tint: tint.map(c => c * 1.3) }); // 冷杉枝条贴图偏暗
   // 看不见的树干：挡子弹、挡视线、挡人（和原来一样）
   const tree = new THREE.Group();
   const trunk = new THREE.Mesh(TRUNK_GEO, trunkMat);
@@ -234,7 +467,9 @@ for (let i = 0; i < 760; i++) {
   const s = 0.55 + Math.random() * 0.4;
   const gy = propBaseY(bx, bz, 0.8 * s);
   const t = 0.85 + Math.random() * 0.2;
-  addTreeImpostor(bx, gy, bz, BUSH_TYPE, s, Math.random() * Math.PI * 2, [t, t * (0.98 + Math.random() * 0.06), t * 0.95], 0.3 * s);
+  const tint = [t, t * (0.98 + Math.random() * 0.06), t * 0.95];
+  addTreeImpostor(bx, gy, bz, BUSH_TYPE, s, Math.random() * Math.PI * 2, tint, 0.3 * s);
+  treeBucket(bx, bz).trees.push({ kind: "bush", x: bx, gy, z: bz, s: s * 1.15, tint });
 }
 
 // 地形定型（房子底下都压平了）→ 生成地形网格与贴着地形的路面

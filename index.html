@@ -18,6 +18,20 @@
 </div>
 
 <div id="canvas-container"></div>
+
+<div id="main-menu">
+  <div class="mm-box">
+    <h1 class="mm-title">PUBG <span>Lite</span></h1>
+    <p class="mm-sub">单机大逃杀 · 50 人跳伞 · 活到最后就吃鸡</p>
+    <div class="mm-label">AI 难度</div>
+    <div class="mm-diffs">
+      <button class="mm-diff" data-d="easy"><b>简单</b><span>枪法差、反应慢；不会蹲人、不扔雷，交火基本站着打，不太容易发现你</span></button>
+      <button class="mm-diff" data-d="normal"><b>普通</b><span>枪法一般；偶尔摸过来找你、扔扔雷，走位一般</span></button>
+      <button class="mm-diff" data-d="hard"><b>困难</b><span>枪法和反应接近真人好手；会阴人、架狙、包抄、扔雷，交火时左右横跳</span></button>
+    </div>
+    <button id="mm-start">开始游戏</button>
+  </div>
+</div>
 <div id="damage-flash"></div>
 <div id="stun-flash"></div>
 <div id="bluezone-overlay"></div>
@@ -263,6 +277,7 @@
 <!-- 游戏脚本：共享同一个全局作用域，必须按以下顺序加载 -->
 <script src="js/settings.js"></script>
 <script src="js/data.js"></script>
+<script src="js/difficulty.js"></script>
 <script src="js/assets_snd.js"></script>
 <script src="js/assets_tex.js"></script>
 <script src="js/assets_trees.js"></script>

@@ -294,7 +294,7 @@ function poseBotInAir(bot, inChute) {
 }
 
 function alertNearbyAIsOnPlayerShot(isSuppressed) {
-  const hearRadius = isSuppressed ? 65 : 210;
+  const hearRadius = (isSuppressed ? 65 : 210) * AI_DIFF.hear;
   const now = performance.now();
   aiPlayers.forEach(bot => {
     if (!bot.alive || bot.phase !== "ground") return;

@@ -14,6 +14,39 @@ let gunBobPhase = 0, gunSwayX = 0, gunSwayY = 0, lastSwayYaw = yaw, lastSwayPitc
 const PLAYER_SPRINT_MULT = 1.3; // 玩家移动一律按冲刺速度（原步行速度 × 1.3）
 let lastAutoPickupTime = 0;
 
+// ---- 主菜单：开局前战场暂停（飞机不飞、AI 不动），背景是慢慢绕着地图转的航拍画面 ----
+let gameStarted = false;
+const menuSaved = { yaw, pitch };
+let menuSel = "hard";
+try { menuSel = localStorage.getItem("aiDifficulty") || "hard"; } catch (e) {}
+if (!AI_DIFFICULTY[menuSel]) menuSel = "hard";
+function refreshMenuSel() { document.querySelectorAll(".mm-diff").forEach(b => b.classList.toggle("sel", b.dataset.d === menuSel)); }
+document.querySelectorAll(".mm-diff").forEach(b => b.addEventListener("click", () => { menuSel = b.dataset.d; refreshMenuSel(); }));
+refreshMenuSel();
+document.body.classList.add("menu-mode");
+function startGame() {
+  if (gameStarted) return;
+  gameStarted = true;
+  try { localStorage.setItem("aiDifficulty", menuSel); } catch (e) {}
+  applyAIDifficulty(menuSel);
+  sfx.init(); // 声音要在点击里开（手机浏览器的规定）
+  document.body.classList.remove("menu-mode");
+  yaw = menuSaved.yaw; pitch = menuSaved.pitch;
+  clock.start(); // 从现在开始计时（空投、毒圈都从开局算）
+  lastFrameStamp = performance.now();
+}
+document.getElementById("mm-start").addEventListener("click", startGame);
+function updateMenuBackdrop(elapsed) {
+  const a = elapsed * 0.035, r = 1100;
+  playerRig.position.set(Math.cos(a) * r, 260, Math.sin(a) * r);
+  yaw = Math.atan2(Math.cos(a), Math.sin(a));
+  pitch = -0.2;
+  camera.rotation.order = "YXZ";
+  camera.rotation.set(pitch, yaw, 0);
+  camera.position.set(0, 0, 0);
+  cullStaticBatches();
+}
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
@@ -22,6 +55,11 @@ function animate() {
   updateAutoQuality(Math.min((now - lastFrameStamp) / 1000, 0.5));
   lastFrameStamp = now;
   quality.frameCounter++;
+  if (!gameStarted) {
+    updateMenuBackdrop(elapsed);
+    renderFrame(elapsed);
+    return;
+  }
   // 淘汰回放播放中：整个战场暂停，只播放录像
   if (replayState.active) {
     updateReplayPlayback(dt, now);

@@ -175,6 +175,8 @@ function botPickupLoot(bot, entry, now) {
 // · 和别的 AI 对枪时偶尔也丢雷
 function botConsiderThrow(bot, now, distToPlayer, canSeePlayer, isAlerted) {
   if (now < bot.nextGrenadeTime) return false;
+  // 难度低的 AI 很少（简单难度从不）扔投掷物
+  if (Math.random() >= AI_DIFF.throws) { bot.nextGrenadeTime = now + 5000; return false; }
   const N = bot.nades, pos = bot.group.position;
   if (!(N.frag || N.smoke || N.stun || N.molotov)) return false;
   if (player.phase === "ground" && canSeePlayer && isAlerted && bot.hp < 60 && N.smoke > 0 && distToPlayer > 12 && distToPlayer < 120) {
@@ -254,7 +256,7 @@ function botScopeZoom(bot, slot = bot.activeSlot) {
 // 视野距离：肉眼 135 米；带了倍镜能看得更远（两把枪里倍率最高的那把）
 function botSightRange(bot) {
   const z = Math.max(botScopeZoom(bot, 0), botScopeZoom(bot, 1));
-  return z >= 6 ? 380 : (z >= 4 ? 320 : (z >= 2 ? 220 : (z > 1 ? 160 : 135)));
+  return (z >= 6 ? 380 : (z >= 4 ? 320 : (z >= 2 ? 220 : (z > 1 ? 160 : 135)))) * AI_DIFF.sight;
 }
 // 最大交战距离：狙击 / 连狙挂高倍镜能打 300 米以上，步枪挂 3 倍以上能打 200 多米
 function botEngageRange(bot, prof, wType) {
@@ -278,7 +280,8 @@ function botCanSeePlayer(bot, d, now, dt) {
   if (player.phase !== "ground") { bot.spot = 0; return false; }
   const pos = bot.group.position;
   const eye = 1.5 - 0.45 * bot.crouchBlend;
-  if (d < 135) {
+  const near = 135 * AI_DIFF.sight;
+  if (d < near) {
     let v = hasLineOfSight(pos, playerRig.position, eye, -0.2);
     // 蹲着被矮掩体挡住、站起来就能看到：站起来探头
     if (!v && bot.crouchBlend > 0.3 && hasLineOfSight(pos, playerRig.position, 1.5, -0.2)) bot.standUntil = now + 1500;
@@ -301,10 +304,10 @@ function botCanSeePlayer(bot, d, now, dt) {
   const moving = Math.hypot(playerVel.x, playerVel.z) > 1.2;
   const fired = now - player.lastFiredAt < 1500 && !player.lastFiredSupp;
   let rate = (moving ? 1.0 : 0.4) * (SPOT_STANCE[player.stance] || 1) * (fired ? 3 : 1) *
-    (1.6 - 0.9 * (d - 135) / Math.max(1, R - 135)) * (bot.adsBlend > 0.5 ? 1.5 : 1) * (off < 0.5 ? 1.3 : 1);
+    (1.6 - 0.9 * (d - near) / Math.max(1, R - near)) * (bot.adsBlend > 0.5 ? 1.5 : 1) * (off < 0.5 ? 1.3 : 1);
   if (bot.lkp && now - bot.lkp.t < 8000 && Math.hypot(bot.lkp.x - playerRig.position.x, bot.lkp.z - playerRig.position.z) < 25) rate *= 2;
   const before = bot.spot;
-  bot.spot = Math.min(1, bot.spot + dt * rate * 0.45);
+  bot.spot = Math.min(1, bot.spot + dt * rate * 0.45 * AI_DIFF.spot);
   // 余光瞥到远处有动静：转过去仔细看
   if (before < 0.12 && bot.spot >= 0.12 && now > bot.faceHintUntil) setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 2500);
   return bot.spot >= 1;
@@ -324,7 +327,7 @@ function botShotDamage(wData, dist) {
 function botVolleyDamageVsBot(bot, target, dist, shots) {
   const w = WEAPONS_DATA[bot.weaponKey];
   if (w.type === "SG") return Math.random() < 0.65 ? Math.round(botShotDamage(w, dist) * (1 - botArmorReduction(target, false))) : 0;
-  const p = shots > 1 ? 0.3 : 0.5;
+  const p = (shots > 1 ? 0.3 : 0.5) * AI_DIFF.volley;
   let total = 0;
   for (let s = 0; s < shots; s++) {
     if (Math.random() > p) continue;
@@ -502,7 +505,8 @@ function botFindOverwatchSpot(bot) {
 function botUpdateTactic(bot, now, elapsed, distToPlayer, canSeePlayer, isOutsideSafe, isInBlueZone) {
   if (now < bot.nextTacticEval) return;
   bot.nextTacticEval = now + 1000 + Math.random() * 500;
-  if (!bot.weaponKey || player.phase !== "ground") { if (bot.tactic) botEndTactic(bot); return; }
+  if (!bot.weaponKey || player.phase !== "ground" || AI_DIFF.tactics <= 0) { if (bot.tactic) botEndTactic(bot); return; }
+  const tk = AI_DIFF.tactics; // 难度低的 AI 少用战术（简单难度完全不用）
   const pos = bot.group.position, L = bot.lkp;
   const lkpAge = L ? now - L.t : Infinity;
   const dL = L ? Math.hypot(L.x - pos.x, L.z - pos.z) : Infinity;
@@ -525,18 +529,18 @@ function botUpdateTactic(bot, now, elapsed, distToPlayer, canSeePlayer, isOutsid
     bot.tacticInfoT = now;
     const inB = getBuildingContainingPoint(pos.x, pos.z, -0.3);
     const pAmb = 0.2 + bot.camper * 0.5 + (inB ? 0.25 : 0) + (bot.hp < 60 ? 0.15 : 0) - (late ? 0.1 : 0);
-    if (Math.random() < pAmb) { botStartAmbush(bot, now, inB); return; }
-    if (Math.random() < 0.35 + bot.aggr * 0.6) { botStartHunt(bot, now); return; }
+    if (Math.random() < pAmb * tk) { botStartAmbush(bot, now, inB); return; }
+    if (Math.random() < (0.35 + bot.aggr * 0.6) * tk) { botStartHunt(bot, now); return; }
   }
   if (bot.tactic) return;
   // 2) 搜猎：知道玩家大概在哪（听到枪声 / 挨了枪 / 交过火），好斗的人会追很远
   if (L && L.t > bot.huntIgnoreT && lkpAge < 10000 + 25000 * bot.aggr && dL < 100 + 220 * bot.aggr + (late ? 150 : 0) &&
-      bot.hp > 40 && !isInBlueZone && Math.random() < 0.1 + bot.aggr * 0.7 + (late ? 0.35 : 0)) {
+      bot.hp > 40 && !isInBlueZone && Math.random() < (0.1 + bot.aggr * 0.7 + (late ? 0.35 : 0)) * tk) {
     botStartHunt(bot, now);
     return;
   }
   // 3) 决赛圈人少了：大致知道玩家在哪一片，主动过去找
-  if (late && (!L || lkpAge > 20000) && now > bot.nextIntelT && distToPlayer < 280 && !isInBlueZone) {
+  if (tk >= 1 && late && (!L || lkpAge > 20000) && now > bot.nextIntelT && distToPlayer < 280 && !isInBlueZone) {
     bot.nextIntelT = now + 15000 + Math.random() * 10000;
     if (Math.random() < 0.4 + bot.aggr * 0.5) {
       const n = Math.min(35, zoneState.curR * 0.25);
@@ -552,13 +556,13 @@ function botUpdateTactic(bot, now, elapsed, distToPlayer, canSeePlayer, isOutsid
   if (bot.camper > 0.6 && !bot.lootTarget && elapsed > bot.landedAt + 30 && !isOutsideSafe && !isInBlueZone && now > bot.nextCampTry) {
     bot.nextCampTry = now + 20000 + Math.random() * 20000;
     const inB = getBuildingContainingPoint(pos.x, pos.z, -0.3);
-    if (inB && Math.random() < bot.camper * 0.6) { botStartAmbush(bot, now, inB, true); return; }
+    if (inB && Math.random() < bot.camper * 0.6 * tk) { botStartAmbush(bot, now, inB, true); return; }
   }
   // 5) 架点狙击：带着高倍镜狙 / 连狙、装备搜得差不多了，就去圈里的高楼窗口架着
   if (botHasScopedLongGun(bot) && elapsed > bot.landedAt + 40 && !bot.lootTarget && !isOutsideSafe && !isInBlueZone &&
       bot.hp > 50 && now > bot.nextOverwatchTry) {
     bot.nextOverwatchTry = now + 25000 + Math.random() * 15000;
-    if (Math.random() < bot.sniperPref) {
+    if (Math.random() < bot.sniperPref * tk) {
       const s = botFindOverwatchSpot(bot);
       if (s) {
         botStartTactic(bot, "overwatch", now, 70000 + Math.random() * 50000);
@@ -759,7 +763,7 @@ function updateAIBot(bot, dt, now, elapsed) {
       const fz = engagePlayer ? playerRig.position.z : duelFoe.group.position.z;
       const distToFoe = engagePlayer ? distToPlayer : duelFoe.group.position.distanceTo(bot.group.position);
       // 按距离切换最合适的枪（近距离切喷子/冲锋枪，远距离切狙击/连狙）
-      if (now > bot.nextWeaponEval) {
+      if (AI_DIFF.weaponSwitch && now > bot.nextWeaponEval) {
         bot.nextWeaponEval = now + 900;
         botConsiderWeaponSwitch(bot, distToFoe, now);
       }
@@ -770,10 +774,11 @@ function updateAIBot(bot, dt, now, elapsed) {
         // 不规则节奏：多数时候反向横移，偶尔急停定点射击，偶尔继续同向长距离拉扯；近距离时左右晃得更快
         // 狙击/连狙远距离时更多原地架枪，喷子/冲锋枪几乎不停步
         const r = Math.random();
-        const pauseP = sniper && distToFoe > 40 ? 0.55 : (closeGun ? 0.1 : 0.2);
+        // 难度低的 AI 走位呆：大多时候站着打，换向也慢
+        const pauseP = 1 - (1 - (sniper && distToFoe > 40 ? 0.55 : (closeGun ? 0.1 : 0.2))) * AI_DIFF.strafe;
         if (r < pauseP) bot.strafePauseUntil = now + (sniper ? 600 + Math.random() * 900 : 200 + Math.random() * 350);
         else if (r < 0.85) bot.strafeDir = -bot.strafeDir;
-        bot.nextStrafeFlip = now + (distToFoe < 20 ? 320 + Math.random() * 520 : 600 + Math.random() * 1400);
+        bot.nextStrafeFlip = now + (distToFoe < 20 ? 320 + Math.random() * 520 : 600 + Math.random() * 1400) * (2 - AI_DIFF.strafe);
       }
       // 按手中武器保持交战距离：喷子/冲锋枪贴脸压近，狙击/连狙拉开距离，步枪中距离
       const prefRange = botProfile(bot).prefRange + bot.rangeBias;

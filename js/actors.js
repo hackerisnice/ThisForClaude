@@ -312,6 +312,9 @@ function createAIBot(id) {
   legL.userData = { isAI: true, isHead: false, bot };
   legR.userData = { isAI: true, isHead: false, bot };
   aiHitboxes.push(body, head, legL, legR);
+  // 枪法基础水平（开局按难度换算，见 difficulty.js）
+  bot.aimBase = {};
+  for (const k of ["reactMs", "perceptLag", "anticipation", "aimOmega", "maxTurn", "aimPrecision", "tremor", "recoilControl", "sprayReactMs", "rangeErr", "triggerDiscipline", "leadSkill"]) bot.aimBase[k] = bot[k];
   aiPlayers.push(bot);
 }
 

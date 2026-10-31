@@ -487,3 +487,33 @@ body.spectate-mode > *:not(#canvas-container):not(#spectate-ui):not(#killfeed):n
   display: none; position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
   border-radius: 50%; background: #ff3b30; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.6); pointer-events: none;
 }
+
+/* 主菜单：开局前选 AI 难度（战场暂停，后面是慢慢转的航拍画面） */
+body.menu-mode > *:not(#canvas-container):not(#main-menu):not(#portrait-warn):not(script) { display: none !important; }
+#main-menu {
+  display: none; position: absolute; inset: 0; z-index: 90; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(8, 12, 18, 0.35), rgba(8, 12, 18, 0.78));
+}
+body.menu-mode #main-menu { display: flex; }
+.mm-box {
+  width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 24px); overflow-y: auto; text-align: center;
+  background: rgba(12, 15, 20, 0.82); border: 1px solid rgba(255, 176, 46, 0.55); border-radius: 12px;
+  padding: 14px 18px 16px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); backdrop-filter: blur(4px);
+}
+.mm-title { margin: 0; font-size: 30px; letter-spacing: 3px; color: #fff; font-weight: 900; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6); }
+.mm-title span { color: #ffb02e; }
+.mm-sub { margin: 4px 0 12px; font-size: 12px; color: #c9ced6; }
+.mm-label { font-size: 12px; color: #ffd27d; font-weight: 800; letter-spacing: 2px; margin-bottom: 6px; text-align: left; }
+.mm-diffs { display: flex; gap: 8px; margin-bottom: 14px; }
+.mm-diff {
+  flex: 1; display: flex; flex-direction: column; gap: 4px; align-items: center; cursor: pointer;
+  background: #171c24; color: #c9ced6; border: 1.5px solid #343c48; border-radius: 9px; padding: 9px 7px; font-size: 11px; line-height: 1.35;
+}
+.mm-diff b { font-size: 16px; color: #fff; }
+.mm-diff.sel { border-color: #ffb02e; background: #2a2416; box-shadow: 0 0 0 2px rgba(255, 176, 46, 0.25); }
+.mm-diff.sel b { color: #ffb02e; }
+#mm-start {
+  width: 100%; padding: 12px; font-size: 18px; font-weight: 900; letter-spacing: 4px; cursor: pointer;
+  color: #1a1206; background: linear-gradient(180deg, #ffc350, #ff9f1c); border: none; border-radius: 9px;
+  box-shadow: 0 4px 14px rgba(255, 159, 28, 0.35);
+}

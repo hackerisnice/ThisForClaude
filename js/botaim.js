@@ -161,9 +161,11 @@ function botAimUpdate(bot, want, dt, now) {
   bot.aimPitch = bot.aimPit + bot.recP;
 }
 
-// 手抖幅度（弧度）：站着 > 蹲着，跑动越快抖得越厉害，没开镜（枪没抵肩）更飘
+// 手抖幅度（弧度）：站着 > 蹲着，跑动越快抖得越厉害，没开镜（枪没抵肩）更飘；
+// 开了倍镜灵敏度低（手指同样抖一下，枪口转的角度小），抖动按倍率的平方根减小
 function botTremorAmp(bot) {
-  return bot.tremor * (1 + 0.45 * Math.min(6, bot.curSpeed)) * (1 - 0.25 * bot.crouchBlend) * (2 - Math.min(1, bot.adsBlend));
+  const zoom = 1 + (botScopeZoom(bot) - 1) * bot.adsBlend;
+  return bot.tremor * (1 + 0.45 * Math.min(6, bot.curSpeed)) * (1 - 0.25 * bot.crouchBlend) * (2 - Math.min(1, bot.adsBlend)) / Math.sqrt(zoom);
 }
 // 枪口（含后坐力）离 AI 想瞄的点差多少（弧度）
 function botAimError(bot) {
@@ -206,6 +208,7 @@ function botTriggerUpdate(bot, now, dist, canFire) {
     if (now < bot.burstHoldUntil || botAimError(bot) > tol) return false;
     bot.burstLeft = botBurstLength(bot, dist);
     bot.burstShots = 0;
+    bot.driftSince = 0;
     bot.nextShotAt = now;
   }
   const wKey = bot.weaponKey, gap = 60000 / WEAPONS_DATA[wKey].rpm;
@@ -218,8 +221,11 @@ function botTriggerUpdate(bot, now, dist, canFire) {
     bot.nextShotAt += gap;
     // 打空了要换弹 / 切枪
     if (bot.weaponKey !== wKey || now < bot.reloadUntil || now < bot.swapUntil) { bot.burstLeft = 0; break; }
-    // 枪口跳出去太多（压不住了）：松开扳机，等枪口回来再打
-    if (botAimError(bot) > tolAbort) bot.burstLeft = 0;
+    // 枪口跳出去太多（压不住了）：要过一个反应时间才意识到、松开扳机，等枪口回来再打
+    if (botAimError(bot) > tolAbort) {
+      if (!bot.driftSince) bot.driftSince = now;
+      else if (now - bot.driftSince > bot.sprayReactMs) bot.burstLeft = 0;
+    } else bot.driftSince = 0;
   }
   if (bot.nextShotAt < now - gap) bot.nextShotAt = now;
   if (fired && bot.burstLeft <= 0 && bot.weaponKey === wKey) bot.burstHoldUntil = now + botBurstPause(bot, dist);
@@ -287,7 +293,7 @@ function botFireShot(bot, now) {
   const st = botRecoilStats(bot), n = bot.burstShots;
   const vCurve = n === 0 ? st.firstMult : 1.2 + Math.min((n + 1) * 0.025, 0.45);
   bot.recP += st.vRec * vCurve * 0.0165 * (1 - bot.recoilControl);
-  bot.recY += (Math.random() - 0.48) * 2 * st.hRec * 0.0135 * (1 - 0.3 * bot.recoilControl);
+  bot.recY += (Math.random() - 0.48) * 2 * st.hRec * 0.0135 * (1 - 0.2 * bot.recoilControl); // 左右晃基本压不住
   // 看到弹着点 / 曳光：目测距离、提前量慢慢修正
   bot.rangeEst += (1 - bot.rangeEst) * 0.12;
   bot.leadEst += (1 - bot.leadEst) * 0.05;

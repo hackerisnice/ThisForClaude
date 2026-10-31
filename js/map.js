@@ -128,7 +128,7 @@ function drawZoneCircles(ctx, toX, toZ, scale, isBig) {
 // 地图上的公共图层：毒圈、航线、空投、声音雷达、玩家箭头
 function drawMapOverlays(ctx, toX, toZ, scale, W, H, isBig) {
   // 安全区（白圈）与当前毒圈（蓝圈）；开局还没刷圈时不画
-  if (zoneState.mode !== "none") drawZoneCircles(ctx, toX, toZ, scale, isBig);
+  if (zoneState.mode !== "none" && zoneState.mode !== "ended") drawZoneCircles(ctx, toX, toZ, scale, isBig);
 
   // 航线（还在飞机上或空中时显示）
   if (player.phase === "plane" || player.phase === "sky" || player.phase === "chute") {

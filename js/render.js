@@ -630,11 +630,9 @@ function flushStaticBatches() {
 
 // 远处批次整体隐藏（玩家每移动 25 米重新判断一次，开销可忽略）
 let lastBatchCullX = Infinity, lastBatchCullZ = Infinity;
-let treeLODPending = false;
 function cullStaticBatches() {
   const px = playerRig.position.x, pz = playerRig.position.z;
-  if (Math.abs(px - lastBatchCullX) + Math.abs(pz - lastBatchCullZ) < 25 && !treeLODPending) return;
-  treeLODPending = updateTreeLOD(px, pz);
+  if (Math.abs(px - lastBatchCullX) + Math.abs(pz - lastBatchCullZ) < 25) return;
   lastBatchCullX = px; lastBatchCullZ = pz;
   for (let i = 0; i < staticBatchMeshes.length; i++) {
     const m = staticBatchMeshes[i];

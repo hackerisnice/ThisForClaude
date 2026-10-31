@@ -68,13 +68,17 @@ function killAIBot(bot, killerName, weaponName, isHeadshot, byPlayer = false) {
   }
 
   if (aliveNow === 1 && player.phase !== "dead") {
+    player.won = true;
     showGameOver(true, 1);
   }
+  // 只剩一个人（玩家或某个 AI）：比赛结束，毒圈消失
+  if (aliveNow <= 1) endMatchZone();
   spectateOnBotKilled(bot, killerBot, killerName, weaponName);
 }
 
 function damagePlayer(dmg, attackerName, wepName, isHead = false) {
-  if (player.phase === "dead") return;
+  // 已经吃鸡了：比赛结束，残留的火 / 子弹 / 摔落都不再扣血（不然会“赢了又被淘汰”）
+  if (player.phase === "dead" || player.won) return;
   let actual = dmg;
   // 毒圈、坠落、燃烧不受防弹衣减免；被打中头部时由头盔减伤
   const ignoreArmor = attackerName === "电网蓝圈 (Blue Zone)" || wepName === "跌落" || wepName === "燃烧瓶";
@@ -105,6 +109,7 @@ function damagePlayer(dmg, attackerName, wepName, isHead = false) {
     replayOnPlayerDeath(attackerName, wepName);
     const rank = aiPlayers.filter(a => a.alive).length + 1;
     showGameOver(false, rank, `${attackerName} (${wepName})`);
+    if (rank <= 2) endMatchZone(); // 被最后一个对手淘汰：他吃鸡，比赛结束
   }
 }
 

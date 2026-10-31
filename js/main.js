@@ -274,7 +274,9 @@ function animate() {
 
   // 毒圈平滑缩圈
   const curStageCfg = ZONE_STAGES[zoneState.stageIdx];
-  if (zoneState.mode === "none") {
+  if (zoneState.mode === "ended") {
+    // 比赛已结束：没有圈了
+  } else if (zoneState.mode === "none") {
     // 开局 5 分钟不刷圈
     zoneState.timerSec -= dt;
     if (zoneState.timerSec <= 0) startFirstZone();
@@ -312,7 +314,7 @@ function animate() {
   if (now - lastSecondTick > 1000) {
     lastSecondTick = now;
     const stNum = zoneState.stageIdx + 1;
-    document.getElementById("zone-timer").innerText = zoneState.mode === "none"
+    document.getElementById("zone-timer").innerText = zoneState.mode === "ended" ? "🏁 比赛结束" : zoneState.mode === "none"
       ? `🕒 ${formatMMSS(zoneState.timerSec)} 后刷圈`
       : (zoneState.mode === "waiting"
         ? `⏳ 阶段${stNum}等待: ${formatMMSS(zoneState.timerSec)}`

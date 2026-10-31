@@ -40,6 +40,18 @@ function startFirstZone() {
   showToast("⚠️ 安全区已刷新，请尽快进入白圈");
 }
 
+// 比赛结束（只剩一个人）：毒圈消失，不再缩、不再扣血，谁都不用再跑毒
+function endMatchZone() {
+  if (zoneState.mode === "ended") return;
+  zoneState.mode = "ended";
+  zoneState.curR = zoneState.startR = zoneState.targetR = ZONE_NONE_R;
+  zoneState.dps = 0;
+  zoneState.timerSec = 0;
+  blueZoneMesh.visible = false;
+  document.getElementById("bluezone-overlay").style.display = "none";
+  document.getElementById("zone-timer").innerText = "🏁 比赛结束";
+}
+
 function formatMMSS(sec) {
   const s = Math.max(0, Math.ceil(sec));
   const m = Math.floor(s / 60);

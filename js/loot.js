@@ -119,7 +119,7 @@ function showGameOver(isWin, rank, killerInfo = "") {
   document.getElementById("go-title").innerText = isWin
     ? "🏆 大吉大利，今晚吃鸡！(WINNER WINNER CHICKEN DINNER)"
     : `💀 再接再厉，本局被 ${killerInfo} 淘汰`;
-  document.getElementById("go-stats").innerText = `最终排名: #${rank} / 50 | 淘汰人数: ${player.kills} | 累计伤害: ${player.totalDmg}`;
+  document.getElementById("go-stats").innerText = `最终排名: #${rank} / 50 | 淘汰人数: ${player.kills} | 累计伤害: ${player.totalDmg} | AI 难度: ${AI_DIFF.name}`;
   replayOnGameOver();
   refreshSpectateButton();
 }

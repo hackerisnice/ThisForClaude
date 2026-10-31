@@ -390,6 +390,7 @@ function surfaceTypeAt(x, z, feetY) {
 // AI 听到玩家脚步：附近（站立跑动 20 米、蹲走 8 米、趴下听不到）且看不见玩家的 AI 会转头望向声音方向，
 // 并记下大概位置（据此决定是蹲着阴人还是摸过去）
 function notifyBotsOfPlayerStep() {
+  if (!AI_DIFF.steps) return; // 简单难度的 AI 不听脚步
   const r = player.stance === "stand" ? 20 : (player.stance === "crouch" ? 8 : 0);
   if (r <= 0) return;
   const now = performance.now();

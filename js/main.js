@@ -444,6 +444,7 @@ function renderFrame(elapsed) {
   blueZoneMat.uniforms.time.value = elapsed;
   waterMat.uniforms.time.value = elapsed;
   updateGrass(elapsed);
+  updateTrees(elapsed);
   updateSunShadowCenter();
   if (sunLight.castShadow) {
     renderer.shadowMap.needsUpdate = quality.frameCounter % QUALITY_PRESETS[quality.tier].shadowEvery === 0;

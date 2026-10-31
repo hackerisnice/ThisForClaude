@@ -35,12 +35,14 @@ const grassBladeTex = (() => {
   return tex;
 })();
 
-// 一丛草的几何：两张交叉的面片（局部高 1、宽 1，底边在 y = 0），法线朝上（正反面受光一样）
+// 一丛草的几何：三片草叶面片绕中心 60° 张开、叶尖往外斜（侧看是一丛，从上往下看也是散开的草叶，
+// 不会是一个个“X”）（局部高 1、宽 1，底边在 y = 0），法线朝上（正反面受光一样）
 const grassGeo = (() => {
   const pos = [], uv = [], nor = [], idx = [];
-  for (let k = 0; k < 2; k++) {
-    const a = k * Math.PI / 2, cx = Math.cos(a) * 0.5, cz = Math.sin(a) * 0.5, b = pos.length / 3;
-    pos.push(-cx, 0, -cz, cx, 0, cz, cx, 1, cz, -cx, 1, -cz);
+  for (let k = 0; k < 3; k++) {
+    const a = k * Math.PI / 3, cx = Math.cos(a) * 0.5, cz = Math.sin(a) * 0.5, b = pos.length / 3;
+    const lean = (k === 1 ? -1 : 1) * 0.22, lx = -Math.sin(a) * lean, lz = Math.cos(a) * lean;
+    pos.push(-cx, 0, -cz, cx, 0, cz, cx + lx, 1, cz + lz, -cx + lx, 1, -cz + lz);
     uv.push(0, 0, 1, 0, 1, 1, 0, 1);
     for (let i = 0; i < 4; i++) nor.push(0, 1, 0);
     idx.push(b, b + 1, b + 2, b, b + 2, b + 3, b, b + 2, b + 1, b, b + 3, b + 2);

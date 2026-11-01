@@ -27,7 +27,7 @@ class SoundEngine {
       this.muffle.type = "lowpass";
       this.muffle.frequency.value = 20000;
       this.master = this.ctx.createGain();
-      this.master.gain.value = 1;
+      this.master.gain.value = gameSettings.sound ? gameSettings.volume : 0; // 设置里可以关声音 / 调音量
       // 压限器：近处连射时多发枪声尾音叠在一起也不会爆音
       this.comp = this.ctx.createDynamicsCompressor();
       this.comp.threshold.value = -12; this.comp.knee.value = 8; this.comp.ratio.value = 6;
@@ -43,6 +43,9 @@ class SoundEngine {
       this.loadSamples();
     }
     if (this.ctx.state === "suspended") this.ctx.resume();
+  }
+  applyVolume() {
+    if (this.master) this.master.gain.value = gameSettings.sound ? gameSettings.volume : 0;
   }
   // 输出端：带左右声道定位（pan: -1 左 ~ 1 右）
   out(pan) {

@@ -19,19 +19,58 @@
 
 <div id="canvas-container"></div>
 
-<div id="main-menu">
+<div id="main-menu" data-page="home">
   <div class="mm-box">
     <h1 class="mm-title">PUBG <span>Lite</span></h1>
-    <p class="mm-sub">单机大逃杀 · 50 人跳伞 · 活到最后就吃鸡</p>
-    <div class="mm-label">AI 难度</div>
-    <div class="mm-diffs">
-      <button class="mm-diff" data-d="easy"><b>简单</b><span>枪法差、反应慢；不会蹲人、不扔雷，交火基本站着打，不太容易发现你</span></button>
-      <button class="mm-diff" data-d="normal"><b>普通</b><span>枪法一般；偶尔摸过来找你、扔扔雷，走位一般</span></button>
-      <button class="mm-diff" data-d="hard"><b>困难</b><span>枪法和反应接近真人好手；会阴人、架狙、包抄、扔雷，交火时左右横跳</span></button>
+    <!-- 首页 -->
+    <div class="mm-page" id="mm-home">
+      <p class="mm-sub">单机大逃杀 · 50 人跳伞 · 活到最后就吃鸡</p>
+      <button class="mm-big" id="mm-play">▶ 开始游戏</button>
+      <button class="mm-big alt" id="mm-open-set">⚙ 设置</button>
     </div>
-    <button id="mm-start">开始游戏</button>
+    <!-- 选难度 -->
+    <div class="mm-page" id="mm-diff-page">
+      <div class="mm-label">选择 AI 难度</div>
+      <div class="mm-diffs">
+        <button class="mm-diff" data-d="easy"><b>简单</b><span>枪法差、反应慢；不会蹲人、不扔雷，交火基本站着打，不太容易发现你</span></button>
+        <button class="mm-diff" data-d="normal"><b>普通</b><span>枪法一般；偶尔摸过来找你、扔扔雷，走位一般</span></button>
+        <button class="mm-diff" data-d="hard"><b>困难</b><span>枪法和反应接近真人好手；会阴人、架狙、包抄、扔雷，交火时左右横跳</span></button>
+      </div>
+      <div class="mm-row">
+        <button class="mm-back">← 返回</button>
+        <button id="mm-start">开始游戏</button>
+      </div>
+    </div>
+    <!-- 设置 -->
+    <div class="mm-page" id="mm-set-page">
+      <div class="mm-label">设置</div>
+      <div class="cfg-rows mm-cfg"></div>
+      <div class="mm-row">
+        <button class="mm-tool" id="mm-layout"><b>🎮 自定义按键</b><span>拖动位置 · 双指缩放 · 隐藏不用的按钮</span></button>
+        <button class="mm-tool" id="mm-range"><b>🎯 室内靶场</b><span>随便选枪和配件，试试现在的键位和灵敏度</span></button>
+      </div>
+      <button class="mm-back wide">← 返回</button>
+    </div>
   </div>
 </div>
+
+<!-- 自定义按键：盖在真按钮上面的编辑层（拖动 = 移动，双指捏合 / 滑条 = 大小，可隐藏） -->
+<div id="layout-editor">
+  <div id="le-boxes"></div>
+  <div id="le-bar">
+    <div id="le-sel">点一个按钮来调整</div>
+    <div id="le-tools">
+      <span>大小</span><input type="range" id="le-size" min="0.5" max="2.2" step="0.05" value="1"><b id="le-size-val">100%</b>
+      <button id="le-hide">隐藏</button>
+    </div>
+    <div id="le-actions">
+      <button id="le-reset">恢复默认</button>
+      <button id="le-cancel">取消</button>
+      <button id="le-save">保存</button>
+    </div>
+  </div>
+</div>
+
 <div id="damage-flash"></div>
 <div id="stun-flash"></div>
 <div id="bluezone-overlay"></div>
@@ -62,44 +101,11 @@
 
 <div id="ui-cfg-panel">
   <div style="color:#ffa500;font-weight:bold;margin-bottom:4px;display:flex;justify-content:space-between;">
-    <span>画质 · 灵敏度 · 键位</span>
+    <span>声音 · 画质 · 灵敏度 · 键位</span>
     <span id="btn-close-cfg" style="cursor:pointer;color:#ff4422;">✕</span>
   </div>
-  <div class="cfg-row">
-    <span>画质:</span>
-    <select id="sel-quality">
-      <option value="auto">自动(推荐)</option>
-      <option value="low">流畅</option>
-      <option value="mid">均衡</option>
-      <option value="high">高清</option>
-    </select>
-  </div>
-  <div class="cfg-row">
-    <span>视角灵敏度:</span>
-    <input type="range" id="rng-look-sens" min="0.3" max="2.0" step="0.05" value="1.0">
-    <b class="cfg-val" id="val-look-sens">1.00</b>
-  </div>
-  <div class="cfg-row">
-    <span>开镜灵敏度:</span>
-    <input type="range" id="rng-ads-sens" min="0.3" max="2.0" step="0.05" value="1.0">
-    <b class="cfg-val" id="val-ads-sens">1.00</b>
-  </div>
-  <div class="cfg-row">
-    <span>自动拾取:</span>
-    <label class="cfg-switch"><input type="checkbox" id="chk-auto-pickup" checked><span>枪 / 子弹 / 装备 / 药</span></label>
-  </div>
-  <div class="cfg-row">
-    <span>自动开门:</span>
-    <label class="cfg-switch"><input type="checkbox" id="chk-auto-door" checked><span>走向关着的门时自动推开</span></label>
-  </div>
-  <div class="cfg-row">
-    <span>按钮大小:</span>
-    <input type="range" id="rng-btn-scale" min="0.65" max="1.30" step="0.05" value="1.0">
-  </div>
-  <div class="cfg-row">
-    <span>按键透明度:</span>
-    <input type="range" id="rng-btn-op" min="0.25" max="1.0" step="0.05" value="0.74">
-  </div>
+  <div class="cfg-rows"></div>
+  <div class="cfg-row"><button class="cfg-btn" id="btn-edit-layout">🎮 自定义按键（拖动 / 缩放 / 隐藏）</button></div>
   <div class="cfg-row cfg-note"><span id="fps-readout">FPS 统计中...</span></div>
 </div>
 
@@ -187,6 +193,26 @@
 <div id="throw-hud">
   <div id="throw-hud-ring"><span id="throw-hud-time">3.4</span></div>
   <div id="throw-hud-text"><b id="throw-hud-name">💣 破片手榴弹</b><span id="throw-hud-tip">松手投掷</span></div>
+</div>
+
+<!-- 室内靶场：成绩面板、选枪、浮动伤害数字 -->
+<div id="range-hud">
+  <div id="rg-top"><span id="rg-title">🎯 靶场</span><span id="rg-stats">开枪 0 · 命中 0 · 爆头 0</span></div>
+  <div id="rg-last">10 / 25 / 50 / 75 / 100 米五条靶道，30 米移动靶，右边 15 米是压枪墙</div>
+  <div id="rg-btns">
+    <button id="rg-pick">🔫 选枪</button>
+    <button id="rg-armor">🛡 护甲:无</button>
+    <button id="rg-clear">🧹 清空</button>
+    <button id="rg-exit">🚪 退出</button>
+  </div>
+</div>
+<div id="range-dmg"></div>
+<div id="range-picker">
+  <div class="rp-head"><b>🔫 选枪 · 配件随便装</b><span>子弹无限 · 装好后点“拿上”</span><button id="rp-close">✕</button></div>
+  <div class="rp-body">
+    <div id="rp-weps"></div>
+    <div id="rp-detail"></div>
+  </div>
 </div>
 
 <div id="backpack-modal">
@@ -313,6 +339,8 @@
 <script src="js/input.js"></script>
 <script src="js/replay.js"></script>
 <script src="js/spectate.js"></script>
+<script src="js/layout.js"></script>
+<script src="js/range.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

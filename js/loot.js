@@ -79,6 +79,7 @@ function killAIBot(bot, killerName, weaponName, isHeadshot, byPlayer = false) {
 function damagePlayer(dmg, attackerName, wepName, isHead = false) {
   // 已经吃鸡了：比赛结束，残留的火 / 子弹 / 摔落都不再扣血（不然会“赢了又被淘汰”）
   if (player.phase === "dead" || player.won) return;
+  if (rangeMode) return; // 靶场里不会受伤（自己的手雷 / 燃烧瓶也不扣血）
   let actual = dmg;
   // 毒圈、坠落、燃烧不受防弹衣减免；被打中头部时由头盔减伤
   const ignoreArmor = attackerName === "电网蓝圈 (Blue Zone)" || wepName === "跌落" || wepName === "燃烧瓶";

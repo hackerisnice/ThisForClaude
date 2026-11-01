@@ -4,6 +4,12 @@
 // ============================================================================
 // 9. 端游倍镜与专属机瞄 SVG 渲染器
 // ============================================================================
+// 倍镜画面用 800×450 的坐标、按“铺满屏幕”缩放：手机屏幕比 16:9 更长时上下会被裁掉一点，
+// 这里算出屏幕上实际能看到的半高（坐标单位），镜片按它定大小，正好接近屏幕上下边
+let scopeSvgSerial = 0;
+function scopeViewHalfH() {
+  return Math.min(225, 400 * window.innerHeight / Math.max(1, window.innerWidth));
+}
 function buildScopeOrIronSightSVG(wep, scopeId) {
   const wData = WEAPONS_DATA[wep.id];
   const ironType = wData.ironType || "ar_ring";
@@ -77,10 +83,28 @@ function buildScopeOrIronSightSVG(wep, scopeId) {
       <feGaussianBlur stdDeviation="2.2" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter></defs>`;
-  // 2 倍以上倍镜：目镜外全部遮黑，只透过镜片看（端游效果）
-  const eyepieceMask = r => `
-    <path fill-rule="evenodd" fill="#050607"
-      d="M-400,-400 H1200 V850 H-400 Z M${400 - r},225 a${r},${r} 0 1,0 ${2 * r},0 a${r},${r} 0 1,0 ${-2 * r},0 Z"/>`;
+  // 2 倍以上倍镜：镜片做大（几乎顶到屏幕上下边），镜片外不再整片涂黑 —— 只是一圈细镜筒 + 往外渐淡的半透明暗角，
+  // 周围的画面还看得见（原来镜片只占屏幕中间一小块，四周全黑）
+  const H = scopeViewHalfH();
+  const uid = "s" + (++scopeSvgSerial); // 每次生成用新的渐变 id（回放 / 观战里也有一份倍镜画面，id 不能撞）
+  const lens = L => `
+    <defs>
+      <radialGradient id="${uid}v" gradientUnits="userSpaceOnUse" cx="400" cy="225" r="${L + 300}">
+        <stop offset="${(L / (L + 300)).toFixed(3)}" stop-color="#040506" stop-opacity="0.86"/>
+        <stop offset="${((L + 24) / (L + 300)).toFixed(3)}" stop-color="#040506" stop-opacity="0.46"/>
+        <stop offset="1" stop-color="#040506" stop-opacity="0.24"/>
+      </radialGradient>
+      <radialGradient id="${uid}e" gradientUnits="userSpaceOnUse" cx="400" cy="225" r="${L}">
+        <stop offset="0.8" stop-color="#000" stop-opacity="0"/>
+        <stop offset="1" stop-color="#000" stop-opacity="0.5"/>
+      </radialGradient>
+    </defs>
+    <path fill-rule="evenodd" fill="url(#${uid}v)"
+      d="M-400,-400 H1200 V850 H-400 Z M${400 - L},225 a${L},${L} 0 1,0 ${2 * L},0 a${L},${L} 0 1,0 ${-2 * L},0 Z"/>
+    <circle cx="400" cy="225" r="${L}" fill="url(#${uid}e)"/>
+    <circle cx="400" cy="225" r="${L + 4}" fill="none" stroke="#0b0d10" stroke-width="9"/>
+    <circle cx="400" cy="225" r="${L - 0.6}" fill="none" stroke="rgba(95,106,118,0.55)" stroke-width="1.2"/>`;
+  const ln = (x1, y1, x2, y2, w, c = "#111") => `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${c}" stroke-width="${w}"/>`;
 
   if (scopeId === "reddot") {
     // 方形红点：方框镜架 + 透明镜片（淡淡的镀膜色和一道反光），镜框下面是底座和亮度旋钮
@@ -124,59 +148,42 @@ function buildScopeOrIronSightSVG(wep, scopeId) {
   }
 
   if (scopeId === "2x") {
+    // 2 倍：绿色圆圈 + 中心点 + 下方一根细竖线
+    const L = Math.round(H * 0.8), k = L / 92;
     return `
-      ${eyepieceMask(116)}
-      ${railBase}
-      <circle cx="478" cy="118" r="38" fill="#1a1d22" stroke="#0b0d0f" stroke-width="3"/>
-      <rect x="485" y="185" width="46" height="68" rx="6" fill="#181b20" stroke="#0b0d0f" stroke-width="2.5"/>
-      <rect x="365" y="88" width="70" height="32" rx="4" fill="#1a1d22" stroke="#0b0d0f" stroke-width="2"/>
-      <circle cx="400" cy="225" r="108" fill="rgba(180,220,200,0.04)" stroke="#16191e" stroke-width="34"/>
-      <circle cx="400" cy="225" r="92" fill="none" stroke="#2b3038" stroke-width="3"/>
-      <circle cx="400" cy="225" r="11" fill="none" stroke="#33ff55" stroke-width="1.8"/>
+      ${lens(L)}
+      <circle cx="400" cy="225" r="${(11 * k).toFixed(1)}" fill="none" stroke="#33ff55" stroke-width="1.8"/>
       <circle cx="400" cy="225" r="2.0" fill="#33ff55"/>
-      <line x1="400" y1="238" x2="400" y2="295" stroke="#111" stroke-width="1.8"/>
+      ${ln(400, 225 + 13 * k, 400, 225 + 62 * k, 1.6)}
     `;
   }
 
   if (scopeId === "3x" || scopeId === "4x") {
+    // 3 / 4 倍：左右横线 + 下方带测距刻度的竖线 + 红色箭头（ACOG）
+    const L = Math.round(H * 0.86), k = L / 108;
+    const tick = (dy, hw) => ln(400 - hw * k, 225 + dy * k, 400 + hw * k, 225 + dy * k, 1.5);
     return `
-      ${eyepieceMask(150)}
-      ${railBase}
-      <rect x="348" y="42" width="104" height="38" rx="4" fill="#111317" stroke="#000" stroke-width="2"/>
-      <text x="400" y="65" fill="#99a3ad" font-size="8" letter-spacing="4" text-anchor="middle">NW  N  NE  E</text>
-      <circle cx="295" cy="135" r="32" fill="#121418"/>
-      <circle cx="505" cy="135" r="32" fill="#121418"/>
-      <rect x="515" y="185" width="42" height="82" rx="6" fill="#121418"/>
-      <circle cx="288" cy="295" r="34" fill="#121418"/>
-      <circle cx="512" cy="295" r="34" fill="#121418"/>
-      <path d="M376,315 L382,252 L388,252 L385,315 Z" fill="rgba(18,20,24,0.68)"/>
-      <path d="M424,315 L418,252 L412,252 L415,315 Z" fill="rgba(18,20,24,0.68)"/>
-      <rect x="397" y="258" width="6" height="58" fill="rgba(18,20,24,0.68)"/>
-      <circle cx="400" cy="225" r="136" fill="rgba(150,195,210,0.05)" stroke="#111317" stroke-width="58"/>
-      <line x1="295" y1="225" x2="382" y2="225" stroke="#111" stroke-width="1.5"/>
-      <line x1="418" y1="225" x2="505" y2="225" stroke="#111" stroke-width="1.5"/>
-      <line x1="400" y1="238" x2="400" y2="325" stroke="#111" stroke-width="1.6"/>
-      <line x1="393" y1="248" x2="407" y2="248" stroke="#111" stroke-width="1.5"/>
-      <line x1="395" y1="262" x2="405" y2="262" stroke="#111" stroke-width="1.5"/>
-      <line x1="396" y1="276" x2="404" y2="276" stroke="#111" stroke-width="1.5"/>
-      <path d="M393,230 L400,222 L407,230" fill="none" stroke="#ff2211" stroke-width="2.5"/>
+      ${lens(L)}
+      <path d="M${400 - 0.16 * L},${225 + L} L${400 - 0.1 * L},${225 + 0.3 * L} L${400 - 0.06 * L},${225 + 0.3 * L} L${400 - 0.08 * L},${225 + L} Z" fill="rgba(18,20,24,0.6)"/>
+      <path d="M${400 + 0.16 * L},${225 + L} L${400 + 0.1 * L},${225 + 0.3 * L} L${400 + 0.06 * L},${225 + 0.3 * L} L${400 + 0.08 * L},${225 + L} Z" fill="rgba(18,20,24,0.6)"/>
+      ${ln(400 - L, 225, 400 - 18 * k, 225, 1.5)}
+      ${ln(400 + 18 * k, 225, 400 + L, 225, 1.5)}
+      ${ln(400, 225 + 13 * k, 400, 225 + 0.3 * L, 1.6)}
+      ${tick(23, 7)}${tick(37, 5)}${tick(51, 4)}
+      <path d="M${400 - 7 * k},${225 + 5 * k} L400,${225 - 3 * k} L${400 + 7 * k},${225 + 5 * k}" fill="none" stroke="#ff2211" stroke-width="2.5"/>
       <circle cx="400" cy="225" r="2.2" fill="#ff2211"/>
     `;
   }
 
+  // 6 / 8 倍：细十字线 + 下方测距刻度 + 下方粗立柱 + 红色中心点
+  const L = Math.round(H * 0.9), k = L / 168;
   return `
-    ${eyepieceMask(200)}
-    <path d="M372,395 L380,315 L387,315 L384,395 Z" fill="rgba(12,14,18,0.88)"/>
-    <path d="M428,395 L420,315 L413,315 L416,395 Z" fill="rgba(12,14,18,0.88)"/>
-    <path d="M368,395 L432,395 L440,450 L360,450 Z" fill="#0d0f12"/>
-    <circle cx="400" cy="225" r="215" fill="none" stroke="#0d0f13" stroke-width="95"/>
-    <circle cx="400" cy="225" r="172" fill="none" stroke="#1a1e24" stroke-width="6"/>
-    <line x1="230" y1="225" x2="570" y2="225" stroke="#111" stroke-width="1.3"/>
-    <line x1="400" y1="150" x2="400" y2="380" stroke="#111" stroke-width="1.3"/>
-    <line x1="394" y1="245" x2="406" y2="245" stroke="#111" stroke-width="1.3"/>
-    <line x1="395" y1="265" x2="405" y2="265" stroke="#111" stroke-width="1.3"/>
-    <line x1="393" y1="285" x2="407" y2="285" stroke="#111" stroke-width="1.3"/>
-    <line x1="396" y1="305" x2="404" y2="305" stroke="#111" stroke-width="1.3"/>
+    ${lens(L)}
+    <path d="M${400 - 0.17 * L},${225 + L} L${400 - 0.12 * L},${225 + 0.54 * L} L${400 - 0.08 * L},${225 + 0.54 * L} L${400 - 0.1 * L},${225 + L} Z" fill="rgba(12,14,18,0.85)"/>
+    <path d="M${400 + 0.17 * L},${225 + L} L${400 + 0.12 * L},${225 + 0.54 * L} L${400 + 0.08 * L},${225 + 0.54 * L} L${400 + 0.1 * L},${225 + L} Z" fill="rgba(12,14,18,0.85)"/>
+    ${ln(400 - L, 225, 400 + L, 225, 1.3)}
+    ${ln(400, 225 - L, 400, 225 + 0.54 * L, 1.3)}
+    ${[20, 40, 60, 80].map((d, i) => ln(400 - (6 - (i & 1) * 1.5) * k, 225 + d * k, 400 + (6 - (i & 1) * 1.5) * k, 225 + d * k, 1.3)).join("")}
     <circle cx="400" cy="225" r="2.2" fill="#ff1a1a"/>
   `;
 }
@@ -206,7 +213,7 @@ function updateScopeState() {
   const zoom = scopeId === "iron" ? 1.1 : (att ? att.zoom : 1.35);
   adsAnim.dur = 0.16 + Math.min(0.16, (zoom - 1) * 0.023);
   adsAnim.sightY = scopeId === "iron" ? 0.075 : 0.105;
-  const svgKey = curWep.id + "|" + scopeId;
+  const svgKey = curWep.id + "|" + scopeId + "|" + Math.round(scopeViewHalfH());
   if (svgKey !== adsAnim.svgKey) {
     adsAnim.svgKey = svgKey;
     scopeSvgEl.innerHTML = buildScopeOrIronSightSVG(curWep, scopeId);

@@ -15,6 +15,7 @@ const PLAYER_SPRINT_MULT = 1.3; // 玩家移动一律按冲刺速度（原步行
 let lastAutoPickupTime = 0;
 
 // ---- 主菜单：开局前战场暂停（飞机不飞、AI 不动），背景是慢慢绕着地图转的航拍画面 ----
+// 首页两个选项：开始游戏（→ 选难度 → 跳伞）、设置（声音 / 画质 / 灵敏度 / 自定义按键 / 室内靶场）
 let gameStarted = false;
 const menuSaved = { yaw, pitch };
 let menuSel = "hard";
@@ -36,6 +37,18 @@ function startGame() {
   lastFrameStamp = performance.now();
 }
 document.getElementById("mm-start").addEventListener("click", startGame);
+const mainMenuEl = document.getElementById("main-menu");
+function showMenuPage(p) { mainMenuEl.dataset.page = p; }
+document.getElementById("mm-play").addEventListener("click", () => showMenuPage("diff"));
+document.getElementById("mm-open-set").addEventListener("click", () => { syncSettingsUI(); showMenuPage("set"); });
+document.querySelectorAll(".mm-back").forEach(b => b.addEventListener("click", () => showMenuPage("home")));
+document.getElementById("mm-layout").addEventListener("click", openLayoutEditor);
+document.getElementById("mm-range").addEventListener("click", startRange);
+// 从靶场退出回来时直接回到“设置”页
+try {
+  const back = sessionStorage.getItem("pubg_menu_page");
+  if (back) { sessionStorage.removeItem("pubg_menu_page"); showMenuPage(back); }
+} catch (e) {}
 function updateMenuBackdrop(elapsed) {
   const a = elapsed * 0.035, r = 1100;
   playerRig.position.set(Math.cos(a) * r, 260, Math.sin(a) * r);
@@ -60,6 +73,11 @@ function animate() {
     renderFrame(elapsed);
     return;
   }
+  // 游戏里打开“自定义按键”：战场暂停，改完再继续
+  if (layoutEd.open) {
+    renderFrame(elapsed);
+    return;
+  }
   // 淘汰回放播放中：整个战场暂停，只播放录像
   if (replayState.active) {
     updateReplayPlayback(dt, now);
@@ -69,44 +87,46 @@ function animate() {
   }
   const adsEase = updateADSAnimation(dt);
 
-  // 空投刷新与降落
-  if (elapsed >= nextAirdropTime) {
-    nextAirdropTime = elapsed + 75;
-    spawnAirdropEvent();
-  }
-  airdrops.forEach(ad => {
-    if (!ad.landed) {
-      ad.crateGroup.position.y -= 14 * dt;
-      if (ad.crateGroup.position.y <= ad.landY) {
-        ad.crateGroup.position.y = ad.landY;
-        ad.landed = true;
-        ad.chute.visible = false;
-        ad.smokeEndTime = elapsed + 110;
-        ad.lootEntries = populateAirdropLoot(ad.x, ad.z, ad.landY);
-        addCollider(ad.x - 0.75, ad.x + 0.75, ad.z - 0.75, ad.z + 0.75, ad.landY, ad.landY + 1.2);
+  // 空投刷新与降落（靶场里没有空投、飞机）
+  if (!rangeMode) {
+    if (elapsed >= nextAirdropTime) {
+      nextAirdropTime = elapsed + 75;
+      spawnAirdropEvent();
+    }
+    airdrops.forEach(ad => {
+      if (!ad.landed) {
+        ad.crateGroup.position.y -= 14 * dt;
+        if (ad.crateGroup.position.y <= ad.landY) {
+          ad.crateGroup.position.y = ad.landY;
+          ad.landed = true;
+          ad.chute.visible = false;
+          ad.smokeEndTime = elapsed + 110;
+          ad.lootEntries = populateAirdropLoot(ad.x, ad.z, ad.landY);
+          addCollider(ad.x - 0.75, ad.x + 0.75, ad.z - 0.75, ad.z + 0.75, ad.landY, ad.landY + 1.2);
+        }
+      } else if (elapsed < ad.smokeEndTime) {
+        ad.smokeParticles.forEach((sp, idx) => {
+          sp.material.opacity = 0.52;
+          sp.position.y += 2.2 * dt;
+          sp.position.x = ad.x + Math.sin(elapsed * 2 + idx) * 0.45;
+          if (sp.position.y > ad.landY + 13) sp.position.y = ad.landY + 1.2;
+        });
+      } else {
+        ad.smokeParticles.forEach(sp => { sp.material.opacity = 0; });
       }
-    } else if (elapsed < ad.smokeEndTime) {
-      ad.smokeParticles.forEach((sp, idx) => {
-        sp.material.opacity = 0.52;
-        sp.position.y += 2.2 * dt;
-        sp.position.x = ad.x + Math.sin(elapsed * 2 + idx) * 0.45;
-        if (sp.position.y > ad.landY + 13) sp.position.y = ad.landY + 1.2;
-      });
-    } else {
-      ad.smokeParticles.forEach(sp => { sp.material.opacity = 0; });
-    }
-  });
+    });
 
-  if (planeGroup.visible) {
-    flightPath.travel += PLANE_SPEED * dt;
-    const pp = flightPointAt(flightPath.travel);
-    planeGroup.position.set(pp.x, PLANE_ALT, pp.z);
-    if (player.phase === "plane") {
-      // 机舱视角：机身后上方
-      playerRig.position.set(pp.x - flightPath.dx * 20, PLANE_ALT + 8, pp.z - flightPath.dz * 20);
-      if (flightPath.travel > flightPath.len - 60) jumpFromPlane(); // 航线尽头强制跳伞
+    if (planeGroup.visible) {
+      flightPath.travel += PLANE_SPEED * dt;
+      const pp = flightPointAt(flightPath.travel);
+      planeGroup.position.set(pp.x, PLANE_ALT, pp.z);
+      if (player.phase === "plane") {
+        // 机舱视角：机身后上方
+        playerRig.position.set(pp.x - flightPath.dx * 20, PLANE_ALT + 8, pp.z - flightPath.dz * 20);
+        if (flightPath.travel > flightPath.len - 60) jumpFromPlane(); // 航线尽头强制跳伞
+      }
+      if (flightPath.travel > flightPath.len + 300) planeGroup.visible = false;
     }
-    if (flightPath.travel > flightPath.len + 300) planeGroup.visible = false;
   }
 
   if (player.phase === "sky" || player.phase === "chute") {
@@ -308,11 +328,13 @@ function animate() {
 
   // AI 完整生命周期（逐帧逻辑见 updateAIBot）；绕路寻路每帧最多算一次
   navSearchesThisFrame = 0;
-  aiPlayers.forEach(bot => updateAIBot(bot, dt, now, elapsed));
+  if (!rangeMode) aiPlayers.forEach(bot => updateAIBot(bot, dt, now, elapsed));
 
-  // 毒圈平滑缩圈
+  // 毒圈平滑缩圈（靶场里没有圈）
   const curStageCfg = ZONE_STAGES[zoneState.stageIdx];
-  if (zoneState.mode === "ended") {
+  if (rangeMode) {
+    // 室内靶场
+  } else if (zoneState.mode === "ended") {
     // 比赛已结束：没有圈了
   } else if (zoneState.mode === "none") {
     // 开局 5 分钟不刷圈
@@ -363,27 +385,28 @@ function animate() {
       if (player.hp < 100) player.hp = Math.min(100, player.hp + (player.boost > 60 ? 3 : 1.5));
       updateAllHUD();
     }
-
-    const pDist = Math.hypot(playerRig.position.x - zoneState.cx, playerRig.position.z - zoneState.cz);
-    const inBlue = player.phase === "ground" && pDist > zoneState.curR;
-    document.getElementById("bluezone-overlay").style.display = inBlue ? "block" : "none";
-    if (inBlue) {
-      damagePlayer(zoneState.dps, "电网蓝圈 (Blue Zone)", "电击");
-    }
-
-    aiPlayers.forEach(bot => {
-      if (!bot.alive || bot.phase !== "ground") return;
-      const bDist = Math.hypot(bot.group.position.x - zoneState.cx, bot.group.position.z - zoneState.cz);
-      if (bDist > zoneState.curR) {
-        bot.hp -= zoneState.dps * 1.4;
-        if (bot.hp <= 0) {
-          killAIBot(bot, "电网蓝圈", "BlueZone", false, false);
-        }
+    if (!rangeMode) {
+      const pDist = Math.hypot(playerRig.position.x - zoneState.cx, playerRig.position.z - zoneState.cz);
+      const inBlue = player.phase === "ground" && pDist > zoneState.curR;
+      document.getElementById("bluezone-overlay").style.display = inBlue ? "block" : "none";
+      if (inBlue) {
+        damagePlayer(zoneState.dps, "电网蓝圈 (Blue Zone)", "电击");
       }
-    });
+
+      aiPlayers.forEach(bot => {
+        if (!bot.alive || bot.phase !== "ground") return;
+        const bDist = Math.hypot(bot.group.position.x - zoneState.cx, bot.group.position.z - zoneState.cz);
+        if (bDist > zoneState.curR) {
+          bot.hp -= zoneState.dps * 1.4;
+          if (bot.hp <= 0) {
+            killAIBot(bot, "电网蓝圈", "BlueZone", false, false);
+          }
+        }
+      });
+    }
   }
 
-  if (now - lastLootScanTime > 120) {
+  if (!rangeMode && now - lastLootScanTime > 120) {
     lastLootScanTime = now;
     const deg = Math.round(((-yaw * 180 / Math.PI) % 360 + 360) % 360);
     const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
@@ -442,6 +465,8 @@ function animate() {
     }
   }
 
+  // 靶场：移动靶、倒靶复位、伤害数字、无限子弹
+  if (rangeMode) updateRange(dt, now);
   // 子弹飞行（下坠 / 飞行时间 / 命中结算）与玩家移动速度（AI 打提前量用）
   trackPlayerVelocity(dt);
   updateBullets(dt);
@@ -456,7 +481,7 @@ function animate() {
   updateDoors(dt);
   if (player.phase !== "ground" && doorBtnText) updatePlayerDoorPrompt(false);
   // 录像：最近 16 秒战场（用于淘汰回放）
-  replayRecordTick(dt);
+  if (!rangeMode) replayRecordTick(dt);
   // 观战：镜头跟着正在看的人
   if (specState.active) updateSpectate(dt, now);
 
@@ -481,7 +506,7 @@ function renderFrame(elapsed) {
   skyMat.uniforms.time.value = elapsed;
   blueZoneMat.uniforms.time.value = elapsed;
   waterMat.uniforms.time.value = elapsed;
-  updateGrass(elapsed);
+  if (!rangeMode) updateGrass(elapsed); // 靶场在室内，不用长草
   updateTrees(elapsed);
   updateSunShadowCenter();
   if (sunLight.castShadow) {

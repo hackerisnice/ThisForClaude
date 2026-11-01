@@ -128,6 +128,11 @@ function traceBulletSegment(b, a, dir, len) {
   // 路上的窗玻璃打碎（不挡子弹）
   glassSegmentBreak(a.x, a.y, a.z, dir.x, dir.y, dir.z, best ? best.dist : len);
   if (fromPlayer) {
+    // 室内靶场的靶子（和 AI 一样大小的假人）
+    if (rangeMode) {
+      const rh = rangeTargetSegmentHit(_bRay, len);
+      if (rh && (!best || rh.dist < best.dist)) best = rh;
+    }
     // 只检测路径附近还活着的 AI
     _bCand.length = 0;
     _bNear.length = 0;
@@ -208,7 +213,7 @@ function finishBullet(b, hit) {
   const impact = !hit ? 0 : (hit.kind === "env" || hit.kind === "door" || hit.kind === "water" ? 2 : 1);
   // 录像：子弹轨迹（时间记在开枪那一刻，回放里按真实弹速飞）
   // AI 互殴的外观子弹不进录像（那一轮射击回放里另有记录）
-  if (!b.info.visual) replayShotEvent(b.owner === -1 ? -1 : b.owner.id, b.from.x, b.from.y, b.from.z, [end.x, end.y, end.z], [impact], 0, b.born, b.v0, b.wId);
+  if (!b.info.visual && !rangeMode) replayShotEvent(b.owner === -1 ? -1 : b.owner.id, b.from.x, b.from.y, b.from.z, [end.x, end.y, end.z], [impact], 0, b.born, b.v0, b.wId);
   if (!hit) return;
   if (hit.kind === "env") {
     const dd = hit.point.distanceTo(playerRig.position);
@@ -229,6 +234,8 @@ function finishBullet(b, hit) {
     if (dd < 60) sfx.playBounce(dd * 0.6, stereoPanFor(hit.point.x, hit.point.z));
   } else if (hit.kind === "bot") {
     playerBulletHitBot(hit.bot, hit.head, hit.point, b.info, b.from.distanceTo(hit.point));
+  } else if (hit.kind === "rtarget") {
+    rangeTargetHit(hit, b);
   } else if (hit.kind === "player") {
     // AI 的子弹和玩家的一样：枪的原始伤害（霰弹按每颗弹丸）× 爆头倍数 × 距离衰减
     const fall = bulletDamageScale(b.wId, b.from.distanceTo(hit.point));

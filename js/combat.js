@@ -165,6 +165,7 @@ function fireCurrentWeapon() {
   fpGunGroup.position.z = -0.38;
 
   const pelletCount = base.type === "SG" ? base.pellets : 1;
+  if (rangeMode) rangeOnShot(pelletCount);
   // 子弹不再瞬间命中：沿准星方向（加上散布与 100 米归零的微小上扬）发射真实弹头，飞到了才结算伤害（见 ballistics.js）
   const zeroAng = bulletZeroAngle(wep.id);
   for (let p = 0; p < pelletCount; p++) {

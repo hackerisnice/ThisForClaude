@@ -216,7 +216,11 @@ function startRange() {
   actionBtn.style.display = "none";
   applyRangeLighting();
 
+  // 靶场在地图外面：把“世界边界”换成靶场房子的范围，不然一走动就被拉回地图边上、从半空掉下去
+  worldBounds.x0 = RANGE.x - RANGE.halfW + 0.3; worldBounds.x1 = RANGE.x + RANGE.halfW - 0.3;
+  worldBounds.z0 = RANGE.z - RANGE.len + 0.3; worldBounds.z1 = RANGE.z + 8 - 0.3;
   player.phase = "ground";
+  player.fallTop = null;
   player.hp = 100; player.boost = 0; player.velY = 0;
   player.stance = "stand"; player.eyeH = 1.7; player.feetY = RANGE.y;
   player.bagLv = 3; player.maxCap = 400;

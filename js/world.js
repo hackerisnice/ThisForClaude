@@ -6,6 +6,13 @@
 // ---------------------------------------------------------------------------
 const MAP_SIZE = 3200;
 const MAP_LIMIT = MAP_SIZE / 2 - 5;
+// 人和投掷物能到的范围：平时是地图边界；室内靶场建在地图外面，进靶场时换成靶场房子的范围（见 range.js）
+const worldBounds = { x0: -MAP_LIMIT, x1: MAP_LIMIT, z0: -MAP_LIMIT, z1: MAP_LIMIT };
+function inWorldBounds(x, z) { return x >= worldBounds.x0 && x <= worldBounds.x1 && z >= worldBounds.z0 && z <= worldBounds.z1; }
+function clampToWorld(p) {
+  p.x = Math.max(worldBounds.x0, Math.min(worldBounds.x1, p.x));
+  p.z = Math.max(worldBounds.z0, Math.min(worldBounds.z1, p.z));
+}
 const FLOOR_H = 3.2;          // 楼层层高
 const STEP_UP = 0.6;          // 能直接迈上去的高度（楼梯、门槛、台阶）
 const RIVER_Z = 330, RIVER_HALF = 23;
@@ -205,8 +212,7 @@ function moveWithWallCollisions(posVec, dx, dz, radius = 0.48, feetY = 0) {
   if (!isPointBlocked2D(nextX, posVec.z, radius, Math.max(feetY, getGroundHeight(nextX, posVec.z, feetY + STEP_UP)))) posVec.x = nextX;
   const nextZ = posVec.z + dz;
   if (!isPointBlocked2D(posVec.x, nextZ, radius, Math.max(feetY, getGroundHeight(posVec.x, nextZ, feetY + STEP_UP)))) posVec.z = nextZ;
-  posVec.x = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, posVec.x));
-  posVec.z = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, posVec.z));
+  clampToWorld(posVec);
 }
 
 // 玩家专用：正面顶到门框 / 楼梯口边缘时，自动往开口那一侧侧滑（最多偏 0.4 米），
@@ -249,7 +255,7 @@ function pushOutOfColliders(posVec, radius, feetY = 0) {
     for (let i = 0; i < steps; i++) {
       const a = (i / steps) * Math.PI * 2;
       const x = posVec.x + Math.cos(a) * r, z = posVec.z + Math.sin(a) * r;
-      if (Math.abs(x) > MAP_LIMIT || Math.abs(z) > MAP_LIMIT) continue;
+      if (!inWorldBounds(x, z)) continue;
       if (!isPointBlocked2D(x, z, radius, feetY)) {
         posVec.x = x; posVec.z = z;
         return true;

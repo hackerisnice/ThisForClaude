@@ -68,8 +68,7 @@ function throwPhysicsStep(p, v, h) {
     else { v.y = 0; const fr = Math.max(0, 1 - 8 * h); v.x *= fr; v.z *= fr; }
   }
   p.y = ny;
-  p.x = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, p.x));
-  p.z = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, p.z));
+  clampToWorld(p);
   return impact;
 }
 

@@ -12,6 +12,7 @@ let lastLootSignature = "";
 // 第一人称持枪晃动（纯视觉）
 let gunBobPhase = 0, gunSwayX = 0, gunSwayY = 0, lastSwayYaw = yaw, lastSwayPitch = pitch;
 const PLAYER_SPRINT_MULT = 1.3; // 玩家移动一律按冲刺速度（原步行速度 × 1.3）
+const FALL_SAFE_H = 8;          // 从多高掉下来才开始掉血（米，原来约 4.7 米）
 let lastAutoPickupTime = 0;
 
 // ---- 主菜单：开局前战场暂停（飞机不飞、AI 不动），背景是慢慢绕着地图转的航拍画面 ----
@@ -149,8 +150,9 @@ function animate() {
     const landY = getGroundHeight(playerRig.position.x, playerRig.position.z, skyFeet + 0.5);
     if (skyFeet > landY + 8) {
       // 高空中不受地面墙体/树木的平面碰撞阻挡（原版跳伞时在半空会被看不见的墙卡住，甚至直直落进墙里）
-      playerRig.position.x = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, playerRig.position.x + step.x));
-      playerRig.position.z = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, playerRig.position.z + step.z));
+      playerRig.position.x += step.x;
+      playerRig.position.z += step.z;
+      clampToWorld(playerRig.position);
     } else {
       // 接近落点才恢复碰撞；若此刻正好处在墙/树/石头上方，先推到旁边空地
       pushOutOfColliders(playerRig.position, 0.5, skyFeet);
@@ -229,18 +231,24 @@ function animate() {
     const groundNow = getGroundHeight(gx, gz, player.feetY + (player.velY > 0 ? 0.05 : STEP_UP));
     if (player.velY !== 0 || player.feetY > groundNow + 0.4) {
       const prevFeet = player.feetY;
+      if (player.fallTop === null) player.fallTop = prevFeet; // 离地那一刻的高度（跳起来的话下面会更新成最高点）
       player.feetY += player.velY * dt;
       player.velY -= 18 * dt;
+      player.fallTop = Math.max(player.fallTop, player.feetY);
       const land = getGroundHeight(gx, gz, prevFeet + 0.05);
       if (player.velY <= 0 && player.feetY <= land) {
         const impact = -player.velY;
+        const drop = player.fallTop - land;
+        player.fallTop = null;
         player.feetY = land;
         player.velY = 0;
         if (impact > 4) sfx.playLanding(Math.min(1, impact / 16));
-        // 坠落伤害：从 5 米以上跳下开始掉血（三层楼顶跳下约掉 30 血）
-        if (impact > 13) damagePlayer(Math.round((impact - 13) * 5.5), "坠落", "跌落");
+        // 坠落伤害按实际掉下来的高度算（帧率高低都一样）：8 米以内（两层半楼高）不掉血；10 米约 12 血，
+        // 12 米约 23，16 米约 42，20 米约 59，25 米约 78，31 米左右摔死（伤害随落地速度 √高度 增加）
+        if (drop > FALL_SAFE_H) damagePlayer(Math.round((Math.sqrt(drop) - Math.sqrt(FALL_SAFE_H)) * 36), "坠落", "跌落");
       }
     } else {
+      player.fallTop = null;
       player.feetY = groundNow;
     }
     // 水深过膝就蹲不下、趴不下（头会没进水里）

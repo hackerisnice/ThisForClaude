@@ -34,27 +34,28 @@ const replayRec = {
 // 录制
 // ---------------------------------------------------------------------------
 const _rq = new THREE.Vector3();
+// 士兵动作按“动作状态”录（速度、步态相位、蹲、举枪、俯仰、正在做的动作……），回放时用同一套动作系统重新摆出来
+const RP_ACTION_CODE = { throw: 1, heal: 2, reload: 3, swap: 4, hit: 5 };
+const RP_ACTION_NAME = [null, "throw", "heal", "reload", "swap", "hit"];
 function writeBotState(bot, A, o) {
-  const g = bot.group;
+  const g = bot.group, rig = bot.rig, st = rig.st;
   _rq.set(0, 0, 1).applyQuaternion(g.quaternion);
-  A[o] = (g.visible ? 1 : 0) | (bot.chuteMesh.visible ? 2 : 0) | (bot.botGunMesh.visible ? 4 : 0) |
-    (bot.vestMesh.visible ? 8 : 0) | (bot.helmetMesh.visible ? 16 : 0) | (bot.packMesh.visible ? 32 : 0) | (bot.scopeMesh.visible ? 64 : 0);
+  A[o] = (g.visible ? 1 : 0) | (st.air === 2 ? 2 : 0) | (rig.gun.visible || (st.armed && rig.gunType) ? 4 : 0) | (rig.scope.visible ? 64 : 0);
   A[o + 1] = g.position.x; A[o + 2] = g.position.y; A[o + 3] = g.position.z;
   A[o + 4] = Math.atan2(_rq.x, _rq.z);
-  A[o + 5] = bot.legLPivot.rotation.x; A[o + 6] = bot.legRPivot.rotation.x;
-  A[o + 7] = bot.upper.rotation.x; A[o + 8] = bot.upper.rotation.y; A[o + 9] = bot.upper.position.y;
-  A[o + 10] = bot.armLPivot.rotation.x; A[o + 11] = bot.armLPivot.rotation.y; A[o + 12] = bot.armLPivot.rotation.z;
-  A[o + 13] = bot.armRPivot.rotation.x; A[o + 14] = bot.armRPivot.rotation.y; A[o + 15] = bot.armRPivot.rotation.z;
-  A[o + 16] = bot.botGunMesh.position.x; A[o + 17] = bot.botGunMesh.position.y; A[o + 18] = bot.botGunMesh.position.z;
-  A[o + 19] = bot.botGunMesh.rotation.x;
+  A[o + 5] = rig.gait; A[o + 6] = st.speed || 0; A[o + 7] = st.moveRel || 0; A[o + 8] = st.crouch || 0;
+  A[o + 9] = st.aim || 0; A[o + 10] = st.ads || 0; A[o + 11] = st.pitch || 0;
+  A[o + 12] = RP_ACTION_CODE[st.action] || 0; A[o + 13] = st.actionT || 0;
+  A[o + 14] = st.air || 0; A[o + 15] = st.dead; A[o + 16] = rig.legYaw;
+  A[o + 17] = 0; A[o + 18] = 0; A[o + 19] = 0;
   A[o + 20] = bot.vestLv; A[o + 21] = bot.helmLv; A[o + 22] = bot.bagLv; A[o + 23] = bot.alive ? 1 : 0;
-  A[o + 24] = bot.head.rotation.z; // 开镜歪头贴腮
+  A[o + 24] = 0;
   A[o + 25] = bot.aimPitch || 0;
   A[o + 26] = bot.adsBlend || 0;
   A[o + 27] = bot.weaponKey ? REPLAY_WEAPON_KEYS.indexOf(bot.weaponKey) : -1;
   const sc = bot.weaponKey && bot.weaponAtts[bot.activeSlot].scope;
   A[o + 28] = sc ? REPLAY_SCOPE_KEYS.indexOf(sc) : -1;
-  A[o + 29] = bot.legLPivot.position.y; // 髋部高度（蹲下时降低）
+  A[o + 29] = 0.72 - 0.42 * (st.crouch || 0); // 髋部高度（蹲下时降低，算视线高度用）
 }
 function writePlayerState(A, o) {
   A[o] = playerRig.position.x; A[o + 1] = player.feetY; A[o + 2] = playerRig.position.z;
@@ -291,14 +292,12 @@ const rpKillMark = document.getElementById("rp-kill-mark");
 const rpTimeEl = document.getElementById("rp-time");
 const rpSlowEl = document.getElementById("replay-slowmo");
 
-// 回放里的“玩家替身”（第一次回放时才创建）
+// 回放里的“玩家替身”（第一次回放时才创建）：和 AI 一样的写实士兵
 let replayAvatar = null;
 function getReplayAvatar() {
   if (!replayAvatar) {
-    const m = buildSoldierModel(new THREE.Color(0x2f6fb0));
-    m.group.rotation.order = "YXZ";
-    m.walkCycle = 0;
-    replayAvatar = m;
+    const rig = createSoldierRig(1, null);
+    replayAvatar = { rig, group: rig.root, lastT: null, wep: undefined, scope: false };
   }
   return replayAvatar;
 }
@@ -377,31 +376,30 @@ function clipFrameAt(clip, t) {
   return [lo, hi, (t - T[lo]) / Math.max(1e-6, T[hi] - T[lo])];
 }
 
-function applyBotState(bot, A, oa, B, ob, al) {
+function applyBotState(bot, A, oa, B, ob, al, t) {
   const L = k => A[oa + k] + (B[ob + k] - A[oa + k]) * al;
   const f = A[oa];
-  const g = bot.group;
+  const g = bot.group, rig = bot.rig, st = rig.st;
   g.visible = (f & 1) !== 0;
   g.position.set(L(1), L(2), L(3));
   g.rotation.set(0, lerpAngle(A[oa + 4], B[ob + 4], al), 0);
-  bot.chuteMesh.visible = (f & 2) !== 0;
-  bot.botGunMesh.visible = (f & 4) !== 0;
-  bot.legLPivot.rotation.x = L(5); bot.legRPivot.rotation.x = L(6);
-  bot.legLPivot.position.y = bot.legRPivot.position.y = L(29);
-  bot.upper.rotation.x = L(7); bot.upper.rotation.y = L(8); bot.upper.position.y = L(9);
-  bot.armLPivot.rotation.set(L(10), L(11), L(12));
-  bot.armRPivot.rotation.set(L(13), L(14), L(15));
-  bot.botGunMesh.position.set(L(16), L(17), L(18));
-  bot.botGunMesh.rotation.x = L(19);
-  const vest = A[oa + 20], helm = A[oa + 21], bag = A[oa + 22];
-  bot.vestMesh.visible = (f & 8) !== 0;
-  if (vest > 0) bot.vestMesh.material = BOT_MAT.vest[vest - 1];
-  bot.helmetMesh.visible = (f & 16) !== 0;
-  if (helm > 0) bot.helmetMesh.material = BOT_MAT.helmet[helm - 1];
-  bot.packMesh.visible = (f & 32) !== 0;
-  if (bag > 0) bot.packMesh.scale.setScalar(0.75 + bag * 0.15);
-  bot.scopeMesh.visible = (f & 64) !== 0;
-  bot.head.rotation.z = L(24);
+  if (!g.visible) return;
+  soldierSetGear(rig, A[oa + 21], A[oa + 20], A[oa + 22]);
+  const wi = A[oa + 27], wk = wi >= 0 ? REPLAY_WEAPON_KEYS[wi] : null, sc = A[oa + 28] >= 0;
+  if (wk !== rig.rpWep || sc !== rig.rpScope) { soldierSetGun(rig, wk, sc); rig.rpWep = wk; rig.rpScope = sc; }
+  st.air = A[oa + 14]; st.speed = L(6); st.moveRel = lerpAngle(A[oa + 7], B[ob + 7], al); st.crouch = L(8); st.prone = 0;
+  st.armed = (f & 4) !== 0; st.aim = L(9); st.ads = L(10); st.pitch = L(11);
+  st.action = RP_ACTION_NAME[A[oa + 12]] || null;
+  st.actionT = A[oa + 12] === B[ob + 12] ? L(13) : A[oa + 13];
+  st.dead = A[oa + 15] >= 0 && B[ob + 15] >= 0 ? L(15) : A[oa + 15];
+  let g0 = A[oa + 5], dg = B[ob + 5] - g0;
+  if (dg > 0.5) dg -= 1; else if (dg < -0.5) dg += 1;
+  st.gait = ((g0 + dg * al) % 1 + 1) % 1;
+  rig.legYaw = L(16);
+  if (t !== undefined) { rig.idleT = t + bot.id * 0.37; rig.crT = rig.idleT; }
+  soldierLOD(rig, g.position.distanceTo(soldierCam.pos));
+  poseSoldier(rig, st, 0);
+  st.gait = undefined;
 }
 
 // 某个角色（-1 = 玩家）在 t 时刻的位置与朝向（out.x/y/z 为脚底，out.fx/fz 为面朝方向）
@@ -450,26 +448,15 @@ function applyReplayFrame(clip, t) {
   const [a, b, al] = clipFrameAt(clip, t);
   const bs = REC_BOTS * RB_STRIDE;
   for (let i = 0; i < REC_BOTS; i++) {
-    const bot = aiPlayers[i];
-    bot.detailMeshes.forEach(m => { m.visible = true; });
-    applyBotState(bot, clip.B, a * bs + i * RB_STRIDE, clip.B, b * bs + i * RB_STRIDE, al);
-    // 被淘汰的那一下：保持最后的姿势向后倒下
-    if (!bot.group.visible) {
-      const ke = killEventFor(clip, i);
-      if (ke && t >= ke.t && t < ke.t + 1.6) {
-        const [ka, kb, kal] = clipFrameAt(clip, ke.t - 0.06);
-        applyBotState(bot, clip.B, ka * bs + i * RB_STRIDE, clip.B, kb * bs + i * RB_STRIDE, kal);
-        bot.group.visible = true;
-        bot.group.rotation.x = -1.5 * Math.min(1, (t - ke.t) / 0.55);
-      }
-    }
+    // 被淘汰的那一下：录像里本来就录着倒地动作（倒地约 2 秒后才消失）
+    applyBotState(aiPlayers[i], clip.B, a * bs + i * RB_STRIDE, clip.B, b * bs + i * RB_STRIDE, al, t);
   }
   // 尸体盒：淘汰后才出现
   clip.events.forEach(e => { if (e.type === "kill" && e.crate) e.crate.visible = t >= e.t + 0.9; });
   applyReplayDoors(clip, t);
 
-  // 玩家替身
-  const av = getReplayAvatar();
+  // 玩家替身（写实士兵，和 AI 同一套动作）
+  const av = getReplayAvatar(), rig = av.rig, rst = rig.st;
   const P = clip.P, oa = a * RP_STRIDE, ob = b * RP_STRIDE;
   const L = k => P[oa + k] + (P[ob + k] - P[oa + k]) * al;
   const phase = P[oa + 6], stance = P[oa + 5], aiming = P[oa + 7] > 0, hasGun = P[oa + 8] > 0;
@@ -478,40 +465,23 @@ function applyReplayFrame(clip, t) {
   g.visible = phase !== 0 && replayState.mode !== "fp";
   g.position.set(L(0), L(1), L(2));
   g.rotation.set(0, yw + Math.PI, 0);
-  av.chuteMesh.visible = phase === 2;
-  av.botGunMesh.visible = hasGun && phase >= 3;
-  av.scopeMesh.visible = P[oa + 13] > 0;
-  av.vestMesh.visible = P[oa + 11] > 0;
-  if (P[oa + 11] > 0) av.vestMesh.material = BOT_MAT.vest[P[oa + 11] - 1];
-  av.helmetMesh.visible = P[oa + 10] > 0;
-  if (P[oa + 10] > 0) av.helmetMesh.material = BOT_MAT.helmet[P[oa + 10] - 1];
-  av.pack.visible = P[oa + 12] > 0;
-  if (phase === 1 || phase === 2) {
-    poseBotInAir(av, phase === 2);
-  } else {
-    const spd = Math.hypot(P[ob] - P[oa], P[ob + 2] - P[oa + 2]) * REC_HZ;
-    av.walkCycle += Math.min(1, spd / 9) * 0.35 * (replayState.paused ? 0 : 1);
-    const sw = Math.sin(av.walkCycle) * Math.min(0.6, spd * 0.08);
-    av.legLPivot.rotation.x = sw; av.legRPivot.rotation.x = -sw;
-    av.upper.rotation.set(aiming ? 0.02 : 0.03 + Math.min(1, spd / 6) * 0.15, 0, 0);
-    av.upper.position.y = 0.72;
-    const up = aiming ? Math.max(-0.6, Math.min(0.6, pt)) : 0;
-    const adsP = aiming && P[oa + 14] > 0; // 玩家开镜：枪抬到眼前、歪头贴腮
-    av.armLPivot.rotation.set(aiming ? -1.38 - up - (adsP ? 0.22 : 0) : -0.1 - sw * 0.5, aiming ? (adsP ? 0.7 : 0.62) : 0, aiming ? 0 : -0.06);
-    av.armRPivot.rotation.set(aiming ? -1.22 - up - (adsP ? 0.3 : 0) : -0.1 + sw * 0.5, aiming ? (adsP ? -0.36 : -0.22) : 0, aiming ? 0 : 0.06);
-    av.botGunMesh.position.set(aiming ? (adsP ? 0.06 : 0.12) : 0.16, aiming ? (adsP ? 0.97 : 0.72) + up * 0.25 : 0.42, aiming ? (adsP ? 0.39 : 0.44) : 0.3);
-    av.botGunMesh.rotation.x = aiming ? -up : 0.55;
-    av.head.rotation.z = adsP ? 0.16 : 0;
-    // 蹲：整个人矮一截、腿向前收；趴：整个人趴平
-    if (stance === 1) { g.position.y -= 0.42; av.legLPivot.rotation.x = -1.25; av.legRPivot.rotation.x = -0.35; }
-    if (stance === 2) { g.rotation.x = 1.45; g.position.y += 0.25; }
-  }
-  // 阵亡：向后倒地
+  soldierSetGear(rig, P[oa + 10], P[oa + 11], P[oa + 12]);
+  const wi = P[oa + 15], wk = wi >= 0 ? REPLAY_WEAPON_KEYS[wi] : null, sc = P[oa + 13] > 0;
+  if (wk !== av.wep || sc !== av.scope) { soldierSetGun(rig, wk, sc); av.wep = wk; av.scope = sc; }
+  const dtR = av.lastT === null ? 0 : Math.max(0, Math.min(0.1, Math.abs(t - av.lastT)));
+  av.lastT = t;
+  const dx = P[ob] - P[oa], dz = P[ob + 2] - P[oa + 2];
+  rst.air = phase === 1 ? 1 : (phase === 2 ? 2 : 0);
+  rst.speed = Math.hypot(dx, dz) * REC_HZ;
+  rst.moveRel = rst.speed > 0.3 ? angleDiff(Math.atan2(dx, dz), yw + Math.PI) : 0;
+  rst.crouch = stance === 1 ? 1 : 0; rst.prone = stance === 2 ? 1 : 0;
+  rst.armed = hasGun && phase >= 3 && !!wk; rst.aim = aiming ? 1 : 0; rst.ads = P[oa + 14] > 0 ? 1 : 0;
+  rst.pitch = Math.max(-0.9, Math.min(0.9, pt)); rst.action = null; rst.gait = undefined;
+  // 阵亡：倒地动作
   const td = deathTimeOfPlayer(clip);
-  if (t >= td) {
-    g.rotation.x = -1.5 * Math.min(1, (t - td) / 0.55);
-    av.botGunMesh.visible = false;
-  }
+  rst.dead = t >= td ? t - td : -1;
+  soldierLOD(rig, g.position.distanceTo(soldierCam.pos));
+  poseSoldier(rig, rst, dtR);
 
   // 投掷物
   const Tarr = clip.T[a];
@@ -782,7 +752,6 @@ function exitReplay() {
     const b = aiPlayers[i];
     applyBotState(b, sv.live, i * RB_STRIDE, sv.live, i * RB_STRIDE, 0);
     b.group.rotation.order = sv.orders[i];
-    b.detailMeshes.forEach(m => { m.visible = b.detailShown; });
   }
   S.clip.events.forEach(e => { if (e.type === "kill" && e.crate) e.crate.visible = true; });
   sv.hidden.forEach(o => { o.visible = true; });

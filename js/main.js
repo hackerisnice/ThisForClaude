@@ -69,6 +69,7 @@ function animate() {
   updateAutoQuality(Math.min((now - lastFrameStamp) / 1000, 0.5));
   lastFrameStamp = now;
   quality.frameCounter++;
+  soldierFrameBegin();
   if (!gameStarted) {
     updateMenuBackdrop(elapsed);
     renderFrame(elapsed);
@@ -337,6 +338,7 @@ function animate() {
   // AI 完整生命周期（逐帧逻辑见 updateAIBot）；绕路寻路每帧最多算一次
   navSearchesThisFrame = 0;
   if (!rangeMode) aiPlayers.forEach(bot => updateAIBot(bot, dt, now, elapsed));
+  updateSoldierDying(dt);
 
   // 毒圈平滑缩圈（靶场里没有圈）
   const curStageCfg = ZONE_STAGES[zoneState.stageIdx];

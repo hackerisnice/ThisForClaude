@@ -125,7 +125,7 @@ function fireCurrentWeapon() {
     fpGunGroup.position.z = -0.3;
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
     raycaster.far = 2.6;
-    const hits = raycaster.intersectObjects(aiHitboxes, false);
+    const hits = raycaster.intersectObjects(aiHitboxes, false).filter(h => h.object.userData.bot && h.object.userData.bot.alive);
     if (hits.length > 0) {
       const bot = hits[0].object.userData.bot;
       if (bot && bot.alive) {

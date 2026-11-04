@@ -141,7 +141,7 @@ function traceBulletSegment(b, a, dir, len) {
       if (!bot.alive || !bot.group.visible) continue;
       const bp = bot.group.position;
       const dd = distPointToSeg(bp.x, bp.y + 1.0, bp.z, a, dir, len);
-      if (dd < 2.6) _bCand.push(bot.body, bot.head, bot.legL, bot.legR);
+      if (dd < 2.6) for (let k = 0; k < bot.hitboxes.length; k++) _bCand.push(bot.hitboxes[k]);
       if (dd < 4.5) _bNear.push(bot);
     }
     if (_bCand.length) {
@@ -199,6 +199,7 @@ function playerBulletHitBot(bot, isHead, point, info, dist = 0) {
   bot.alertUntil = now + 12000;
   bot.playerThreatT = now;
   botFlinch(bot, now);
+  bot.hitAnimAt = now; // 中弹动作
   bot.strafeDir = -bot.strafeDir;
   setBotFaceHint(bot, playerRig.position.x, playerRig.position.z, 1500);
   botLearnPlayerPos(bot, now, 0.05);

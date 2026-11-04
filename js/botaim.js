@@ -91,7 +91,7 @@ function botComputeDesiredAim(bot, now) {
   let m;
   if (now - bot.mzT > 100) { m = botMuzzlePosition(bot, _aimMz); bot.mzT = now; }
   else {
-    m = _aimMz.set(0, 0, 0.36).applyMatrix4(bot.botGunMesh.matrixWorld);
+    m = _aimMz.setFromMatrixPosition(bot.rig.muzzle.matrixWorld);
     const g = bot.group.matrixWorld.elements, p = bot.group.position;
     m.x += p.x - g[12]; m.y += p.y - g[13]; m.z += p.z - g[14];
   }

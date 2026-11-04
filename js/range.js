@@ -1,6 +1,6 @@
 // range.js：室内靶场（主菜单 → 设置 → 🎯 室内靶场）
 // 一个封闭的室内训练场：射击位隔间 + 10 / 25 / 50 / 75 / 100 米五条靶道、30 米横向移动靶、15 米压枪墙。
-// 靶子是和 AI 一模一样大小的假人（头 / 躯干 / 腿的命中盒尺寸相同），伤害按真实规则算（枪的伤害、爆头倍数、
+// 靶子就是和 AI 一模一样的写实士兵（同一套命中盒：头 / 躯干 / 手臂 / 腿），伤害按真实规则算（枪的伤害、爆头倍数、
 // 距离衰减、可选靶子护甲），打中会飘伤害数字，打倒后倒下再自己立起来。枪和配件随便选，子弹无限。
 // 用的是你现在的键位、灵敏度和画质设置。没有 AI、没有毒圈、没有飞机，退出就回主菜单
 // （所有脚本共享同一个全局作用域，按 index.html 里的顺序依次加载）
@@ -43,49 +43,29 @@ function rangeSign(text, sub, x, y, z, w, h, color) {
   return m;
 }
 
-// 和 AI 一样大小的训练假人：腿 0.26×0.72、躯干 0.74×0.92、头 0.40×0.42（见 actors.js 的 BOT_GEO）
-const RANGE_MAT = {
-  body: new THREE.MeshLambertMaterial({ color: 0xc9b28c }),
-  head: new THREE.MeshLambertMaterial({ color: 0xd8c4a0 }),
-  legs: new THREE.MeshLambertMaterial({ color: 0x9d8a6c }),
-  base: new THREE.MeshLambertMaterial({ color: 0x2c2f33 }),
-  ring: new THREE.MeshBasicMaterial({ color: 0xc0392b, transparent: true, opacity: 0.85, side: THREE.DoubleSide }),
-  vest: [null, new THREE.MeshLambertMaterial({ color: 0x8d8f7a }), new THREE.MeshLambertMaterial({ color: 0x3f4a3a }), new THREE.MeshLambertMaterial({ color: 0x23272b })]
-};
+// 靶子就是和 AI 一模一样的写实士兵（同一个模型、同一套骨骼命中盒：头 / 躯干 / 骨盆 / 手臂 / 腿），站着不动；
+// 打倒后整个人往后倒，过一会儿再立起来
+const RANGE_BASE_MAT = new THREE.MeshLambertMaterial({ color: 0x2c2f33 });
+const _rangeIdleSt = { air: 0, speed: 0, moveRel: 0, crouch: 0, prone: 0, armed: false, aim: 0, ads: 0, pitch: 0, action: null, actionT: 0, dead: -1 };
 function makeRangeTarget(x, z, label) {
   const g = new THREE.Group();
   g.position.set(x, RANGE.y, z);
-  const base = new THREE.Mesh(UNIT_BOX, RANGE_MAT.base);
+  const base = new THREE.Mesh(UNIT_BOX, RANGE_BASE_MAT);
   base.scale.set(0.9, 0.06, 0.6); base.position.y = 0.03;
   g.add(base);
   const pivot = new THREE.Group(); // 打倒后绕脚底往后倒
   g.add(pivot);
   const t = { group: g, pivot, parts: [], hp: 100, state: "up", fall: 0, downAt: 0, firstHit: 0, hitsThis: 0, label, moving: false, dir: 1 };
-  const part = (sx, sy, sz, px, py, mat, zone) => {
-    const m = new THREE.Mesh(UNIT_BOX, mat);
-    m.scale.set(sx, sy, sz); m.position.set(px, py, 0);
-    m.castShadow = true;
-    m.userData = { rt: t, zone };
-    pivot.add(m);
-    if (zone) t.parts.push(m);
-    return m;
-  };
-  part(0.26, 0.72, 0.28, -0.18, 0.36, RANGE_MAT.legs, "legs");
-  part(0.26, 0.72, 0.28, 0.18, 0.36, RANGE_MAT.legs, "legs");
-  part(0.74, 0.92, 0.42, 0, 1.18, RANGE_MAT.body, "body");
-  part(0.40, 0.42, 0.40, 0, 1.88, RANGE_MAT.head, "head");
-  part(0.19, 0.64, 0.21, -0.47, 1.26, RANGE_MAT.body, null); // 手臂只是外观（AI 的手臂也不算命中）
-  part(0.19, 0.64, 0.21, 0.47, 1.26, RANGE_MAT.body, null);
-  // 胸口的红色靶心圈
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.13, 24), RANGE_MAT.ring);
-  ring.position.set(0, 1.3, 0.215);
-  pivot.add(ring);
-  // 护甲（靶子护甲不是“无”的时候显示）
-  t.vest = new THREE.Mesh(UNIT_BOX, RANGE_MAT.vest[1]);
-  t.vest.scale.set(0.8, 0.6, 0.48); t.vest.position.y = 1.3; t.vest.visible = false;
-  t.helm = new THREE.Mesh(new THREE.SphereGeometry(0.255, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.55), RANGE_MAT.vest[1]);
-  t.helm.position.y = 1.95; t.helm.visible = false;
-  pivot.add(t.vest, t.helm);
+  const rig = createSoldierRig(rangeState.targets.length, null);
+  scene.remove(rig.root);
+  rig.root.visible = true;
+  rig.root.position.y = 0.06;
+  rig.root.rotation.y = 0; // 面朝射击位（+Z）
+  pivot.add(rig.root);
+  rig.idleT = rangeState.targets.length * 0.7;
+  poseSoldier(rig, _rangeIdleSt, 0);
+  rig.hitboxes.forEach(h => { h.userData.rt = t; t.parts.push(h); });
+  t.rig = rig;
   scene.add(g);
   rangeState.targets.push(t);
   return t;
@@ -263,7 +243,7 @@ function rangeOnShot(pellets) {
   rangeState.statsDirty = true;
 }
 
-const RANGE_ZONE_NAME = { head: "头部", body: "躯干", legs: "腿部" };
+const RANGE_ZONE_NAME = { head: "头部", body: "躯干", arms: "手臂", legs: "腿部" };
 function rangeTargetHit(hit, b) {
   const t = hit.target;
   if (t.state !== "up") return;
@@ -444,10 +424,7 @@ document.getElementById("rg-armor").addEventListener("click", () => {
   rangeState.armor = (rangeState.armor + 1) % 4;
   const lv = rangeState.armor;
   document.getElementById("rg-armor").innerText = `🛡 护甲:${RANGE_ARMOR_NAMES[lv].replace(" ", "")}`;
-  rangeState.targets.forEach(t => {
-    t.vest.visible = t.helm.visible = lv > 0;
-    if (lv > 0) t.vest.material = t.helm.material = RANGE_MAT.vest[lv];
-  });
+  rangeState.targets.forEach(t => soldierSetGear(t.rig, lv, lv, 0));
   showToast(lv ? `靶子穿上 ${lv} 级头盔 + ${lv} 级防弹衣` : "靶子不穿护甲");
 });
 document.getElementById("rg-clear").addEventListener("click", () => {

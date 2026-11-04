@@ -201,96 +201,47 @@ function steerAndMoveAI(bot, desiredTarget, speed, dt, allowPlan = true) {
     if (moved > 0.0001) bot.moveHeading = bot.curHeading;
   }
 
-  // 驱动双腿以髋部为轴自然交替摆动，步幅随速度变化
-  if (moved > 0.004) {
-    bot.walkCycle += moved * 5.2;
-    const amp = Math.min(0.6, 0.15 + (moved / Math.max(dt, 0.001)) * 0.08);
-    const swing = Math.sin(bot.walkCycle) * amp;
-    bot.legLPivot.rotation.x = swing;
-    bot.legRPivot.rotation.x = -swing;
-  } else {
-    const decay = Math.max(0, 1 - dt * 9);
-    bot.legLPivot.rotation.x *= decay;
-    bot.legRPivot.rotation.x *= decay;
-  }
+  // 实际移动速度（顶着墙走不动时腿也不再原地空跑），给下半身动作用
+  if (dt > 0) bot.animSpeed = (bot.animSpeed || 0) + (moved / dt - (bot.animSpeed || 0)) * Math.min(1, dt * 10);
+  bot.walkCycle += moved * 5.2;
 
   return moved;
 }
 
-// AI 上半身动画：跑动前倾与起伏、自然摆臂、交火时举枪瞄准、远距离隐藏装备细节
+// AI 动作（写实士兵模型，见 soldier.js）：下半身按实际移动速度混合 站 / 走 / 跑 / 冲刺 / 蹲走，
+// 横移、后退时腿朝移动方向；交火时举枪瞄准（枪口真的对着目标高度），换弹 / 切枪 / 打药 / 扔雷 / 中弹有对应动作
 function animateBotBody(bot, dt, aiming, distToPlayer, now) {
   const k = Math.min(1, dt * 8);
   bot.aimBlend += ((aiming ? 1 : 0) - bot.aimBlend) * k;
-  const aim = bot.aimBlend;
-  const speedN = Math.min(1, bot.curSpeed / 6);
-  const swing = Math.sin(bot.walkCycle);
-
-  // 开镜：枪托抵肩、枪抬到眼前、歪头贴腮；上半身随目标高度俯仰（枪口真的对着目标）
-  const ads = (bot.adsBlend || 0) * aim;
-  const targetLean = 0.03 + speedN * 0.17 * (1 - aim * 0.6) - (bot.aimPitch || 0) * aim * 0.9;
-  bot.upper.rotation.x += (targetLean - bot.upper.rotation.x) * k;
-  bot.upper.rotation.y = swing * 0.07 * speedN * (1 - aim);
-  // 蹲下：上半身和髋部一起降低 0.42 米，一条腿向前屈膝、一条腿向后跪地（停下来才蹲，走动时站起来）
+  // 蹲下（阴人 / 打药 / 远距离架枪时停下来才蹲，走动时站起来）
   const crouchOn = bot.crouchWant && bot.curSpeed < 1.2 && now > bot.standUntil;
   bot.crouchBlend += ((crouchOn ? 1 : 0) - bot.crouchBlend) * Math.min(1, dt * 7);
-  const cr = bot.crouchBlend;
-  const hipY = 0.72 - 0.42 * cr;
-  bot.upper.position.y = hipY + Math.abs(Math.cos(bot.walkCycle)) * 0.045 * speedN + Math.sin(now * 0.002 + bot.wanderPhase) * 0.006;
-  bot.legLPivot.position.y = hipY;
-  bot.legRPivot.position.y = hipY;
-  if (cr > 0.001) {
-    bot.legLPivot.rotation.x += (-1.25 - bot.legLPivot.rotation.x) * cr;
-    bot.legRPivot.rotation.x += (1.3 - bot.legRPivot.rotation.x) * cr;
-  }
-  bot.head.rotation.z = 0.16 * ads;
-
-  const armSwing = swing * 0.55 * speedN * (1 - aim);
-  bot.armLPivot.rotation.x = (-0.1 - armSwing) * (1 - aim) + (-1.38 - 0.22 * ads) * aim;
-  bot.armRPivot.rotation.x = (-0.1 + armSwing) * (1 - aim) + (-1.22 - 0.3 * ads) * aim;
-  bot.armLPivot.rotation.y = (0.62 + 0.08 * ads) * aim;
-  bot.armRPivot.rotation.y = (-0.22 - 0.14 * ads) * aim;
-  bot.armLPivot.rotation.z = -0.06 * (1 - aim);
-  bot.armRPivot.rotation.z = 0.06 * (1 - aim);
-
-  bot.botGunMesh.position.set(0.16 - 0.04 * aim - 0.06 * ads, 0.42 + 0.3 * aim + 0.25 * ads, 0.3 + 0.14 * aim - 0.05 * ads);
-  // 换弹 / 切枪时枪口下压晃动，打药时双手收在胸前
-  const reloading = now < bot.reloadUntil || now < bot.swapUntil;
-  bot.botGunMesh.rotation.x = 0.55 * (1 - aim) + (reloading ? 0.35 + Math.sin(now * 0.012) * 0.15 : 0);
-  if (bot.healUntil > 0) {
-    bot.armLPivot.rotation.set(-0.9, 0.5, 0);
-    bot.armRPivot.rotation.set(-0.9, -0.5, 0);
-  }
-  // 投掷动作：右手先抬到脑后蓄力，再向前甩出
-  if (now < bot.throwAnimUntil) {
-    const ph = 1 - (bot.throwAnimUntil - now) / 520;
-    bot.armRPivot.rotation.set(ph < 0.45 ? -1.2 - 1.9 * (ph / 0.45) : -3.1 + 2.6 * smoothstep(0.45, 1, ph), -0.15, 0.1);
-    bot.upper.rotation.y = ph < 0.45 ? 0.25 * (ph / 0.45) : 0.25 - 0.5 * smoothstep(0.45, 1, ph);
-  }
-
-  // 装备外观随 AI 实际捡到的等级变化（防弹衣/头盔颜色 = 等级，背包大小 = 等级）
-  bot.vestMesh.visible = bot.vestLv > 0;
-  if (bot.vestLv > 0) bot.vestMesh.material = BOT_MAT.vest[bot.vestLv - 1];
-  const showDetail = distToPlayer < quality.detailDist;
-  bot.helmetMesh.visible = showDetail && bot.helmLv > 0;
-  if (bot.helmLv > 0) bot.helmetMesh.material = BOT_MAT.helmet[bot.helmLv - 1];
-  bot.packMesh.visible = showDetail && bot.bagLv > 0;
-  if (bot.bagLv > 0) bot.packMesh.scale.setScalar(0.75 + bot.bagLv * 0.15);
-  if (showDetail !== bot.detailShown) {
-    bot.detailShown = showDetail;
-    bot.detailMeshes.forEach(m => { m.visible = showDetail; });
-  }
+  const rig = bot.rig;
+  soldierSetGear(rig, bot.helmLv, bot.vestLv, bot.bagLv);
+  const st = rig.st;
+  st.air = 0; st.dead = -1; st.prone = 0; st.gait = undefined;
+  st.speed = bot.animSpeed || 0;
+  st.moveRel = angleDiff(bot.moveHeading, bot.group.rotation.y);
+  st.crouch = bot.crouchBlend;
+  st.armed = !!bot.weaponKey;
+  st.aim = bot.aimBlend;
+  st.ads = bot.adsBlend || 0;
+  st.pitch = bot.aimPitch || 0;
+  st.action = null; st.actionT = 0;
+  if (now < bot.throwAnimUntil) { st.action = "throw"; st.actionT = 1 - (bot.throwAnimUntil - now) / 520; }
+  else if (bot.healUntil > 0) st.action = "heal";
+  else if (now < bot.swapUntil) { st.action = "swap"; st.actionT = 1 - (bot.swapUntil - now) / 650; }
+  else if (now < bot.reloadUntil && bot.weaponKey) { st.action = "reload"; st.actionT = Math.max(0, 1 - (bot.reloadUntil - now) / botProfile(bot).reload); }
+  else if (now - bot.hitAnimAt < 330) { st.action = "hit"; st.actionT = (now - bot.hitAnimAt) / 330; }
+  soldierDrive(rig, st, dt);
 }
 
-// 空中姿态：自由落体张开四肢俯冲，开伞后双手上举拉伞绳
-function poseBotInAir(bot, inChute) {
-  bot.upper.rotation.set(inChute ? 0.05 : 0.95, 0, 0);
-  bot.upper.position.y = 0.72;
-  bot.legLPivot.position.y = 0.72;
-  bot.legRPivot.position.y = 0.72;
-  bot.armLPivot.rotation.set(inChute ? -2.8 : 0, inChute ? 0.25 : 0, inChute ? 0 : -1.35);
-  bot.armRPivot.rotation.set(inChute ? -2.8 : 0, inChute ? -0.25 : 0, inChute ? 0 : 1.35);
-  bot.legLPivot.rotation.x = inChute ? 0.12 : 0.45;
-  bot.legRPivot.rotation.x = inChute ? -0.08 : 0.3;
+// 空中姿态：自由落体脸朝下张开四肢，开伞后双手举过头顶拉操纵绳，伞衣随风轻微摆动
+function poseBotInAir(bot, inChute, dt, now) {
+  const rig = bot.rig, st = rig.st;
+  st.air = inChute ? 2 : 1; st.dead = -1; st.action = null; st.armed = false;
+  if (inChute && rig.chute) rig.chute.rotation.z = Math.sin(now * 0.0016 + bot.wanderPhase) * 0.08;
+  soldierDrive(rig, st, dt);
 }
 
 function alertNearbyAIsOnPlayerShot(isSuppressed) {

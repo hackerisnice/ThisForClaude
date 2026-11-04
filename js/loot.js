@@ -10,7 +10,7 @@ const deathCrateMat = new THREE.MeshLambertMaterial({ color: 0xa8743f, map: wood
 function killAIBot(bot, killerName, weaponName, isHeadshot, byPlayer = false) {
   if (!bot.alive) return;
   bot.alive = false;
-  bot.group.visible = false;
+  soldierDie(bot.rig); // 倒地动作，约 2 秒后只剩死亡盒
   // 击杀数（观战列表里显示）
   const killerBot = aiPlayers.find(o => o.name === killerName && o !== bot);
   if (killerBot) killerBot.kills = (killerBot.kills || 0) + 1;

@@ -21,7 +21,6 @@ const AI_WEAPON_PROFILE = {
 };
 // 武器在 近(<18m) / 中(<60m) / 远 距离的适用度，AI 据此决定切哪把枪
 const AI_RANGE_FIT = { SG: [1.0, 0.25, 0.0], SMG: [0.95, 0.6, 0.15], AR: [0.7, 1.0, 0.7], LMG: [0.6, 0.9, 0.75], DMR: [0.35, 0.8, 0.95], SR: [0.2, 0.6, 1.0] };
-const BOT_GUN_LENGTH = { AR: 1.0, SMG: 0.72, LMG: 1.15, SG: 1.05, DMR: 1.25, SR: 1.4 };
 const BOT_MED_CAP = [3, 5, 7, 9]; // 背包等级越高能带的药越多
 const BOT_NADE_CAP = { frag: 3, smoke: 2, stun: 2, molotov: 2 };   // 每种投掷物最多带几个
 const BOT_NADE_WANT = { frag: 1.6, smoke: 1.0, stun: 1.0, molotov: 1.2 }; // 看到投掷物基本都会捡
@@ -38,13 +37,11 @@ function botMagSize(bot, slot) {
 function botSetActiveSlot(bot, slot) {
   bot.activeSlot = slot;
   bot.weaponKey = bot.weapons[slot];
-  bot.botGunMesh.visible = !!bot.weaponKey;
-  if (bot.weaponKey) bot.botGunMesh.scale.set(1, 1, BOT_GUN_LENGTH[WEAPONS_DATA[bot.weaponKey].type] || 1);
   botRefreshGunLook(bot);
 }
-// 手上的枪装了倍镜就在模型上显示出来
+// 手上的枪：枪种决定枪模，装了倍镜就在模型上显示出来
 function botRefreshGunLook(bot) {
-  bot.scopeMesh.visible = !!(bot.weaponKey && bot.weaponAtts[bot.activeSlot].scope);
+  soldierSetGun(bot.rig, bot.weaponKey, !!(bot.weaponKey && bot.weaponAtts[bot.activeSlot].scope));
 }
 // 开镜所需时间：倍率越高抬枪越慢（与玩家开镜动画同一量级）
 function botAdsTime(bot) {
@@ -373,8 +370,8 @@ function botAfterShots(bot, shots, dist, now) {
 
 // 枪口世界坐标（枪模前端，随开镜姿势、身体俯仰一起动）
 function botMuzzlePosition(bot, out) {
-  bot.botGunMesh.updateWorldMatrix(true, false);
-  return out.set(0, 0, 0.36).applyMatrix4(bot.botGunMesh.matrixWorld);
+  bot.rig.muzzle.updateWorldMatrix(true, false);
+  return out.setFromMatrixPosition(bot.rig.muzzle.matrixWorld);
 }
 // AI 开枪的枪口火光（远处看得到谁在开枪）
 function spawnBotMuzzleFlash(bot) {
@@ -631,7 +628,6 @@ function updateAIBot(bot, dt, now, elapsed) {
   if (bot.phase === "plane" && (flightPath.travel >= bot.dropS || !planeGroup.visible)) {
     bot.phase = "sky";
     bot.group.visible = true;
-    bot.chuteMesh.visible = false;
     bot.group.position.set(
       planeGroup.position.x + (Math.random() - 0.5) * 10,
       planeGroup.position.y - 3,
@@ -648,7 +644,6 @@ function updateAIBot(bot, dt, now, elapsed) {
     if (bot.phase === "sky" && bot.group.position.y < PLANE_ALT - 15 &&
         (bot.group.position.y <= 58 || dist2D > bot.group.position.y * 0.68 + 30)) {
       bot.phase = "chute";
-      bot.chuteMesh.visible = true;
     }
     const fallSpd = bot.phase === "sky" ? 38 : 11.5;
     const glideSpd = bot.phase === "sky" ? 26 : 21;
@@ -659,9 +654,7 @@ function updateAIBot(bot, dt, now, elapsed) {
       bot.group.position.z += (toLandZ / dist2D) * step;
       bot.group.lookAt(bot.landTarget.x, bot.group.position.y, bot.landTarget.z);
     }
-    poseBotInAir(bot, bot.phase === "chute");
-    // 伞衣随风轻微摆动
-    if (bot.phase === "chute") bot.chuteMesh.rotation.z = Math.sin(now * 0.0016 + bot.wanderPhase) * 0.08;
+    poseBotInAir(bot, bot.phase === "chute", dt, now);
 
     // 触地收伞（可落在遗迹台基/桥面上），如果落在楼顶则自动顺移到门外地面
     const touchY = getGroundHeight(bot.group.position.x, bot.group.position.z, bot.group.position.y + 0.05);
@@ -669,7 +662,6 @@ function updateAIBot(bot, dt, now, elapsed) {
       bot.group.position.y = touchY;
       bot.phase = "ground";
       bot.landedAt = elapsed;
-      bot.chuteMesh.visible = false;
       const landedOnHouse = getBuildingContainingPoint(bot.group.position.x, bot.group.position.z, 0.8);
       if (landedOnHouse) {
         const door = Math.random() < 0.5 ? landedOnHouse.southDoor : landedOnHouse.northDoor;

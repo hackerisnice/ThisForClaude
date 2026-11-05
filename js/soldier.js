@@ -37,15 +37,21 @@ const SOLDIER = (() => {
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0.8, 0), 2.1);
     return g;
   }
-  const lodGeos = A.lods.map(m => geo(m, true));
+  // 两套衣服（T 恤 + 工装裤 / 长袖作训服），每套三档细节模型 + 一件贴身防弹衣
+  const outfitGeos = A.outfits.map(o => o.lods.map(m => geo(m, true)));
+  const vestGeos = A.outfits.map(o => geo(o.vest, true));
   const gearGeo = {};
-  for (const k in A.gear) gearGeo[k] = geo(A.gear[k], k === "vest");
+  for (const k in A.gear) gearGeo[k] = geo(A.gear[k], false);
   gearGeo.helm1.boundingSphere = gearGeo.helm2.boundingSphere = gearGeo.pack.boundingSphere = null;
   gearGeo.helm1.computeBoundingSphere(); gearGeo.helm2.computeBoundingSphere(); gearGeo.pack.computeBoundingSphere();
 
-  const charTex = A.tex.map(loadTex);
+  // 外观：每种外观 = 一套衣服 + 一张贴图（迷彩配色 + 肤色）
+  const variantOutfit = A.variants.map(v => v.outfit);
+  const charTex = A.variants.map(v => loadTex(v.tex));
   const hairTex = loadTex(A.hairTex), gearTex = loadTex(A.gearTex);
   const charMats = charTex.map(t => new THREE.MeshLambertMaterial({ map: t, skinning: true }));
+  // 近处的高模：逐像素光照（脸、衣服褶皱更平滑，不会看到一块块三角面），带一点点皮肤 / 布料高光
+  const charMatsHi = charTex.map(t => new THREE.MeshPhongMaterial({ map: t, skinning: true, specular: 0x161616, shininess: 18 }));
   const hairMat = new THREE.MeshLambertMaterial({ map: hairTex, skinning: true, alphaTest: 0.45, side: THREE.DoubleSide });
   const helmMats = [
     new THREE.MeshLambertMaterial({ map: gearTex, color: 0xffffff, side: THREE.DoubleSide }),      // 1 级：摩托头盔
@@ -102,7 +108,7 @@ const SOLDIER = (() => {
   const hitMat = new THREE.MeshBasicMaterial({ visible: false });
   const noMat = new THREE.MeshBasicMaterial({ visible: false }); // 戴头盔时把头发藏起来（不然短发会从贴头皮的头盔里扎出来）
 
-  return { A, nb, boneIdx, rest, lodGeos, gearGeo, charMats, hairMat, helmMats, vestMats, packMats, clips,
+  return { A, nb, boneIdx, rest, outfitGeos, vestGeos, variantOutfit, gearGeo, charMats, charMatsHi, hairMat, helmMats, vestMats, packMats, clips,
     GUN_SPECS, gunGeos, gunMetal, gunWood, scopeGeo, hitGeo, hitMat, noMat, variants: charMats.length };
 })();
 
@@ -128,8 +134,9 @@ function createSoldierRig(variant, owner) {
   root.updateMatrixWorld(true);
   const skel = new THREE.Skeleton(bones);
   const v = ((variant % S.variants) + S.variants) % S.variants;
-  const lods = S.lodGeos.map((g, i) => {
-    const m = new THREE.SkinnedMesh(g, [S.charMats[v], S.hairMat]);
+  const outfit = S.variantOutfit[v];
+  const lods = S.outfitGeos[outfit].map((g, i) => {
+    const m = new THREE.SkinnedMesh(g, [i === 0 ? S.charMatsHi[v] : S.charMats[v], S.hairMat]);
     m.bind(skel);
     m.castShadow = i < 2; m.receiveShadow = true;
     m.visible = i === 0;
@@ -139,7 +146,7 @@ function createSoldierRig(variant, owner) {
   // 装备
   const helm = [new THREE.Mesh(S.gearGeo.helm1, S.helmMats[0]), new THREE.Mesh(S.gearGeo.helm2, S.helmMats[1])];
   helm.forEach(h => { h.visible = false; h.castShadow = true; h.scale.setScalar(1.05); bones[SB.head].add(h); });
-  const vest = new THREE.SkinnedMesh(S.gearGeo.vest, S.vestMats[0]);
+  const vest = new THREE.SkinnedMesh(S.vestGeos[outfit], S.vestMats[0]);
   vest.bind(skel); vest.visible = false; vest.castShadow = true;
   root.add(vest);
   const pack = new THREE.Mesh(S.gearGeo.pack, S.packMats[0]);
@@ -301,6 +308,7 @@ function soldierSetWorldRot(Q, bi, worldQ) {
   Q[bi * 4] = _iq2.x; Q[bi * 4 + 1] = _iq2.y; Q[bi * 4 + 2] = _iq2.z; Q[bi * 4 + 3] = _iq2.w;
   _ikW[bi].copy(worldQ);
 }
+const _hQ = new THREE.Quaternion();
 function soldierArmIK(Q, side, target, pole) {
   const ua = SB["upperarm_" + side], la = SB["lowerarm_" + side], ha = SB["hand_" + side];
   const sh = _ikP[ua];
@@ -494,17 +502,29 @@ function poseSoldier(rig, st, dt) {
     let fore = spec.fore;
     let down = -0.04;
     if (act === "reload") { const r = Math.sin(at * Math.PI); fore += (spec.grip + 0.12 - fore) * r; down -= 0.14 * r; }
-    _tL.copy(_sgP).addScaledVector(_sgD, fore).addScaledVector(_sgU, down);
+    _tL.copy(_sgP).addScaledVector(_sgD, fore).addScaledVector(_sgU, down - 0.05).addScaledVector(_sgR, 0.012);
     _poleR.set(-0.75, -0.6, -0.2); _poleL.set(0.6, -0.8, 0.0);
-    const ikW = Math.min(1, 0.6 + aim);
-    if (ikW > 0) {
-      soldierArmIK(Q, "r", _tR, _poleR);
-      soldierArmIK(Q, "l", _tL, _poleL);
-    }
+    soldierArmIK(Q, "r", _tR, _poleR);
+    soldierArmIK(Q, "l", _tL, _poleL);
+    // 手掌朝向：取动捕“双手握枪”姿势里两只手相对瞄准方向的角度，套到步枪上
+    // （右手握住握把、左手托住前面），不再是前臂顺下来的随意角度
+    _hQ.setFromRotationMatrix(_sgM);
+    soldierSetWorldRot(Q, SB.hand_r, _hd3.copy(_hQ).multiply(SOLDIER_GRIP.r));
+    if (act !== "reload") soldierSetWorldRot(Q, SB.hand_l, _hd3.copy(_hQ).multiply(SOLDIER_GRIP.l));
   }
   soldierApply(rig, Q, pel);
 }
 const _crP = new Float32Array(3);
+const _hd3 = new THREE.Quaternion();
+// 动捕“双手握枪”待机姿势第一帧里两只手的朝向（模型坐标，人面朝 +Z、枪口朝前）
+const SOLDIER_GRIP = (() => {
+  const Q = new Float32Array(SOLDIER.nb * 4), P = new Float32Array(3);
+  soldierSample(SOLDIER.clips.Pistol_Idle_Loop, 0, Q, P);
+  soldierFK(null, Q, P);
+  // 左手：右手握把姿势左右镜像（像握前握把一样握在护木下面）
+  const r = _ikW[SB.hand_r].clone();
+  return { r, l: new THREE.Quaternion(r.x, -r.y, -r.z, r.w) };
+})();
 
 function soldierApply(rig, Q, pel) {
   const b = rig.bones, nb = SOLDIER.nb;

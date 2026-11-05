@@ -38,15 +38,17 @@
 ## 人物模型（[MakeHuman](http://www.makehumancommunity.org) 资源，CC0）
 
 AI 和回放里的人物：用 MakeHuman 的人体基础网格 + 体型变形数据（男性、年轻、偏结实）离线拼出来，
-套上低模身体代理、衣服、鞋、手套、头发、头盔，绑定 MakeHuman 的 game_engine 骨骼权重，再减面成近 / 中 / 远三档，
-贴图合并成一张图集（衣服重新上了迷彩色），全部以 base64 内嵌在 `js/assets_soldier.js` 里。
+身体直接用完整精度的基础网格（脸部细节完整，衣服盖住的部分删掉），套上衣服、鞋、手套、头发、头盔，
+绑定 MakeHuman 的 game_engine 骨骼权重，再减面成近 / 中 / 远三档。两套衣服（T 恤 + 工装裤 / 长袖作训服）× 六种外观，
+每种外观一张图集（脸单独占一大块，衣服重新上了迷彩色），全部以 base64 内嵌在 `js/assets_soldier.js` 里。
 
 | 游戏里的用途 | 素材（作者） |
 |---|---|
 | 人体网格、体型变形、骨骼权重 | MakeHuman 基础网格 hm08 / macro targets / game_engine 权重（MakeHuman 团队） |
-| 身体（低模） | male1591 代理网格（MakeHuman 系统资源） |
+| 身体 | hm08 基础网格（MakeHuman 团队） |
 | 皮肤 | young / middleage 男性皮肤贴图（MakeHuman 系统资源） |
-| 眼睛 / 眉毛 / 头发 | low-poly 眼睛、eyebrow001、short04（MakeHuman 系统资源） |
+| 眼睛 / 眉毛 / 头发 | high-poly / low-poly 眼睛、eyebrow001、short04（MakeHuman 系统资源） |
+| 长袖作训服（外套 + 长裤，重新上迷彩） | male_casualsuit05（MakeHuman 系统资源） |
 | T 恤 | elvs_crude_t-shirt_male（Elvaerwyn） |
 | 工装裤（重新上迷彩） | cortu_cargo_pants（Cortu） |
 | 靴子 | culturalibre_male_boots（culturalibre） |
@@ -63,7 +65,8 @@ AI 和回放里的人物：用 MakeHuman 的人体基础网格 + 体型变形数
 | 站立 / 走 / 跑 / 冲刺 / 蹲 / 蹲走 / 倒地 / 中弹 / 跳 / 扔雷 / 打药 等动捕动作 | Universal Animation Library、Universal Animation Library 2 |
 
 动作离线重定向到 MakeHuman 的骨骼上（按骨骼名对应，先对齐静止姿势再套用每帧的旋转）；
-拿枪的姿势、横移 / 后退时腿的朝向、跳伞 / 开伞姿势是游戏里实时计算的（双手 IK 握枪）。
+拿枪的姿势、横移 / 后退时腿的朝向、跳伞 / 开伞姿势是游戏里实时计算的（双手 IK 握枪；
+手掌握把的角度取自动捕的双手握枪姿势，左手是右手握把姿势的镜像，像握前握把一样托在护木下面）。
 
 ## 枪声与音效（[Freesound](https://freesound.org)，均为 CC0 授权的录音）
 

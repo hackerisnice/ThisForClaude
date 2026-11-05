@@ -100,9 +100,10 @@ const SOLDIER = (() => {
   const scopeGeo = mergeBoxes([[0, 0.12, 0.38, 0.045, 0.05, 0.2], [0, 0.12, 0.28, 0.06, 0.06, 0.03], [0, 0.12, 0.49, 0.065, 0.065, 0.035], [0, 0.09, 0.38, 0.02, 0.03, 0.05]]);
   const hitGeo = new THREE.BoxGeometry(1, 1, 1);
   const hitMat = new THREE.MeshBasicMaterial({ visible: false });
+  const noMat = new THREE.MeshBasicMaterial({ visible: false }); // 戴头盔时把头发藏起来（不然短发会从贴头皮的头盔里扎出来）
 
   return { A, nb, boneIdx, rest, lodGeos, gearGeo, charMats, hairMat, helmMats, vestMats, packMats, clips,
-    GUN_SPECS, gunGeos, gunMetal, gunWood, scopeGeo, hitGeo, hitMat, variants: charMats.length };
+    GUN_SPECS, gunGeos, gunMetal, gunWood, scopeGeo, hitGeo, hitMat, noMat, variants: charMats.length };
 })();
 
 const SB = SOLDIER.boneIdx;
@@ -137,7 +138,7 @@ function createSoldierRig(variant, owner) {
   });
   // 装备
   const helm = [new THREE.Mesh(S.gearGeo.helm1, S.helmMats[0]), new THREE.Mesh(S.gearGeo.helm2, S.helmMats[1])];
-  helm.forEach(h => { h.visible = false; h.castShadow = true; bones[SB.head].add(h); });
+  helm.forEach(h => { h.visible = false; h.castShadow = true; h.scale.setScalar(1.05); bones[SB.head].add(h); });
   const vest = new THREE.SkinnedMesh(S.gearGeo.vest, S.vestMats[0]);
   vest.bind(skel); vest.visible = false; vest.castShadow = true;
   root.add(vest);
@@ -205,6 +206,8 @@ function soldierSetGear(rig, helmLv, vestLv, packLv) {
     rig.helm[0].visible = helmLv === 1;
     rig.helm[1].visible = helmLv >= 2;
     if (helmLv >= 2) rig.helm[1].material = SOLDIER.helmMats[helmLv - 1];
+    const hairM = helmLv > 0 ? SOLDIER.noMat : SOLDIER.hairMat;
+    rig.lods.forEach(m => { if (m.material[1] !== hairM) m.material = [m.material[0], hairM]; });
   }
   if (vestLv !== rig.vestLv) {
     rig.vestLv = vestLv;
